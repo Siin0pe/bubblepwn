@@ -24,6 +24,7 @@ Flags shared across subcommands:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -191,6 +192,7 @@ class EsAudit(Module):
     category = "exploit"
     subcommands = (
         "probe", "analyze", "dumpone <type>", "dumpall",
+        "sqlite [path]",
         "query <endpoint> '<json>'",
         "encrypt '<json>' [--appname slug]",
         "decrypt <y> <x> <z> --appname slug",
@@ -199,9 +201,9 @@ class EsAudit(Module):
         "--compare", "--field-leak", "--batch", "--branch test",
         "--endpoint aggregate|search", "--types t1,t2", "--confirm",
         "--auth", "--batch-size <N>", "--max <N>",
-        "--appname <slug>",
+        "--appname <slug>", "--sqlite",
     )
-    example = "run es-audit probe"
+    example = "run es-audit dumpall --confirm --sqlite"
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         argv: list[str] = kwargs.get("argv", [])
@@ -255,12 +257,16 @@ class EsAudit(Module):
                 )
                 return
             await self._dumpall(ctx, anon, auth, app_version, flags)
+            if flags.get("sqlite"):
+                self._sqlite(ctx, positional, flags)
         elif sub == "query":
             await self._query(ctx, anon, auth, positional, flags)
+        elif sub == "sqlite":
+            self._sqlite(ctx, positional, flags)
         else:
             console.print(
                 f"[red]unknown subcommand:[/] {sub}  "
-                "(probe|analyze|dumpone|dumpall|query|encrypt|decrypt)"
+                "(probe|analyze|dumpone|dumpall|sqlite|query|encrypt|decrypt)"
             )
 
     # ── probe ────────────────────────────────────────────────────────────
@@ -802,3 +808,245 @@ class EsAudit(Module):
         )
         for t, _ in exposed:
             await self._dumpone(ctx, anon, auth, app_version, t, flags)
+
+    # ── sqlite ───────────────────────────────────────────────────────────
+
+    def _sqlite(
+        self,
+        ctx: Context,
+        positional: list[str],
+        flags: dict[str, Any],
+    ) -> None:
+        """Rebuild a SQLite DB from the JSONL dumps in ``out/<host>/es/``.
+
+        One table per Bubble data type. Column types are inferred from the
+        Bubble field-name suffix (``_number``, ``_boolean``, ``_date``,
+        ``___<type>``) and from the JSON value shape. Reference-style fields
+        (``<creator>__LOOKUP__<target_id>``) get a companion
+        ``<field>__ref_id`` column with the extracted target id so joins
+        are direct.
+        """
+        import sqlite3
+        from pathlib import Path as _Path
+
+        if ctx.target is None:
+            console.print("[red]no target set[/]")
+            return
+
+        dump_dir = _Path("out") / ctx.target.host / "es"
+        if not dump_dir.exists() or not any(dump_dir.glob("*.jsonl")):
+            console.print(
+                f"[yellow]No dumps at {dump_dir}[/]. Run "
+                "[cyan]es-audit dumpone <type>[/] or [cyan]dumpall --confirm[/] first."
+            )
+            return
+
+        # Positional: subcommand at [0], optional output path at [1].
+        default_db = _Path("out") / ctx.target.host / "es.sqlite"
+        out_db = _Path(positional[1]) if len(positional) > 1 else default_db
+        out_db.parent.mkdir(parents=True, exist_ok=True)
+        if out_db.exists():
+            out_db.unlink()
+
+        panel(
+            "es-audit — sqlite",
+            f"reading  [cyan]{dump_dir}/*.jsonl[/]\n"
+            f"building [cyan]{out_db}[/]",
+            style="cyan",
+        )
+
+        conn = sqlite3.connect(out_db)
+        conn.execute("PRAGMA journal_mode = WAL")
+        stats: list[dict[str, Any]] = []
+
+        jsonl_files = sorted(dump_dir.glob("*.jsonl"))
+        from bubblepwn.ui import progress_iter
+        with progress_iter("Importing JSONL", len(jsonl_files)) as bar:
+            for f in jsonl_files:
+                type_name = f.stem
+                table = _safe_table_name(type_name)
+                bar.set_description(f"{table}")
+                try:
+                    rows, cols = _import_jsonl_into_sqlite(conn, f, table)
+                except Exception as exc:
+                    console.print(f"[yellow]![/] {type_name}: {exc}")
+                    bar.advance()
+                    continue
+                stats.append({
+                    "type": type_name, "table": table,
+                    "rows": rows, "columns": cols,
+                })
+                bar.advance()
+
+        conn.commit()
+        conn.close()
+
+        # Render summary
+        from rich.table import Table as RichTable
+        t = RichTable(header_style="bold cyan", border_style="dim")
+        t.add_column("Type", style="cyan", no_wrap=True, overflow="fold")
+        t.add_column("Table", style="magenta", no_wrap=True)
+        t.add_column("Rows", justify="right")
+        t.add_column("Columns", justify="right")
+        total_rows = 0
+        for s in sorted(stats, key=lambda x: -x["rows"]):
+            t.add_row(s["type"], s["table"], str(s["rows"]), str(s["columns"]))
+            total_rows += s["rows"]
+        console.print(t)
+        console.print(
+            f"\n[green]✓[/] {len(stats)} table(s) · {total_rows} row(s) · "
+            f"[cyan]{out_db}[/]"
+        )
+        console.print(
+            "[dim]Open with `sqlite3 "
+            f"{out_db}` or any SQLite GUI. Join example:\n"
+            "  SELECT u.* FROM t_user u JOIN t_custom_documents_rse d "
+            '  ON u._id = d."Created By__ref_id";[/]'
+        )
+
+        ctx.add_finding(Finding(
+            module=self.name,
+            severity="info",
+            title=f"Rebuilt SQLite database ({len(stats)} tables, {total_rows} rows)",
+            detail=f"Output: {out_db}",
+            data={"path": str(out_db), "tables": stats},
+        ))
+
+
+# ── SQLite helpers (module-level, no `self`) ─────────────────────────────
+
+_SQL_KEYWORDS = {
+    "user", "group", "order", "select", "insert", "update", "delete",
+    "table", "index", "view", "from", "where", "join",
+}
+
+
+def _safe_table_name(raw_type: str) -> str:
+    """``custom.user`` → ``t_custom_user``. Always-prefix to avoid SQL keywords."""
+    slug = re.sub(r"[^a-zA-Z0-9_]", "_", raw_type).strip("_")
+    return f"t_{slug}" if slug else "t_unnamed"
+
+
+_BUBBLE_SUFFIX_TO_SQL = {
+    "text": "TEXT",
+    "number": "REAL",
+    "boolean": "INTEGER",
+    "date": "INTEGER",
+    "image": "TEXT",
+    "file": "TEXT",
+    "option": "TEXT",
+    "list": "TEXT",
+    "geographic_address": "TEXT",
+}
+
+
+def _infer_sql_type(field_name: str, sample_value: Any) -> str:
+    """Guess SQLite column type from field name suffix or value."""
+    # Explicit Bubble suffix: `___<type>` or `_<type>` at end
+    m = re.search(r"___([a-z_]+)$|_(text|number|boolean|date|image|file|option|list)$",
+                  field_name)
+    if m:
+        suffix = m.group(1) or m.group(2)
+        if suffix in _BUBBLE_SUFFIX_TO_SQL:
+            return _BUBBLE_SUFFIX_TO_SQL[suffix]
+    # Special well-known names
+    lname = field_name.lower()
+    if lname in ("created date", "modified date", "_version"):
+        return "INTEGER"
+    # Fallback on JSON value type
+    if isinstance(sample_value, bool):
+        return "INTEGER"
+    if isinstance(sample_value, int):
+        return "INTEGER"
+    if isinstance(sample_value, float):
+        return "REAL"
+    return "TEXT"
+
+
+def _split_lookup(value: Any) -> Optional[str]:
+    """Extract the target id from ``<creator>__LOOKUP__<target_id>`` pattern."""
+    if not isinstance(value, str):
+        return None
+    idx = value.find("__LOOKUP__")
+    if idx < 0:
+        return None
+    return value[idx + len("__LOOKUP__"):]
+
+
+def _import_jsonl_into_sqlite(
+    conn: Any, jsonl_path: Any, table: str
+) -> tuple[int, int]:
+    """Return ``(rows_inserted, total_columns)``."""
+    # Read every record first to finalise the schema (some columns only
+    # appear in later records).
+    records: list[dict[str, Any]] = []
+    with jsonl_path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # A dump entry may be a full hit envelope ({_source: {...}, _id,...})
+            # or already a flat record.
+            source = rec.get("_source") if isinstance(rec, dict) and "_source" in rec else rec
+            if isinstance(source, dict):
+                records.append(source)
+    if not records:
+        return 0, 0
+
+    # Collect columns + infer types, then add companion *__ref_id* columns
+    # for every __LOOKUP__ field encountered.
+    sample_by_col: dict[str, Any] = {}
+    has_lookup: set[str] = set()
+    for rec in records:
+        for k, v in rec.items():
+            if k not in sample_by_col and v is not None:
+                sample_by_col[k] = v
+            if _split_lookup(v) is not None:
+                has_lookup.add(k)
+
+    columns: dict[str, str] = {}
+    for col, sample in sample_by_col.items():
+        columns[col] = _infer_sql_type(col, sample)
+    # Ensure _id, if present, is the primary key
+    for k in list(records[0].keys()):
+        if k not in columns:
+            columns[k] = "TEXT"
+
+    lookup_cols = {f"{k}__ref_id": "TEXT" for k in has_lookup}
+    all_cols = {**columns, **lookup_cols}
+
+    # Quote for DDL / DML safety
+    cols_ddl = ", ".join(f'"{c}" {t}' for c, t in all_cols.items())
+    # Add PRIMARY KEY on _id if the column exists
+    if "_id" in all_cols:
+        cols_ddl += ', PRIMARY KEY ("_id")'
+    conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+    conn.execute(f'CREATE TABLE "{table}" ({cols_ddl})')
+
+    col_names = list(all_cols.keys())
+    placeholders = ",".join("?" for _ in col_names)
+    quoted = ",".join(f'"{c}"' for c in col_names)
+    stmt = f'INSERT OR IGNORE INTO "{table}" ({quoted}) VALUES ({placeholders})'
+
+    rows: list[tuple[Any, ...]] = []
+    for rec in records:
+        row: list[Any] = []
+        for c in col_names:
+            if c.endswith("__ref_id"):
+                src_col = c[: -len("__ref_id")]
+                row.append(_split_lookup(rec.get(src_col)))
+                continue
+            v = rec.get(c)
+            if isinstance(v, (dict, list)):
+                v = json.dumps(v, ensure_ascii=False)
+            elif isinstance(v, bool):
+                v = 1 if v else 0
+            row.append(v)
+        rows.append(tuple(row))
+
+    conn.executemany(stmt, rows)
+    return len(rows), len(all_cols)

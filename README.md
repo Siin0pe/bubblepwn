@@ -65,11 +65,52 @@ lands in a single `Context` and can be exported as a structured report
 
 ## Install
 
-Requires Python 3.11+.
+Requires Python 3.11+. Three install paths, pick the one that matches your
+setup. All of them install a `bubblepwn` console script on `PATH` so you can
+run the tool from any directory inside the environment.
+
+### From a git clone (editable, recommended for development)
 
 ```bash
+git clone https://github.com/Siin0pe/bubblepwn.git
+cd bubblepwn
 pip install -e .
+bubblepwn --version
 ```
+
+### From GitHub directly
+
+```bash
+pip install "git+https://github.com/Siin0pe/bubblepwn.git@v0.2.0"
+# or the latest main:
+pip install "git+https://github.com/Siin0pe/bubblepwn.git"
+```
+
+For the private repo during early access, add your GitHub token:
+
+```bash
+pip install "git+https://<TOKEN>@github.com/Siin0pe/bubblepwn.git@v0.2.0"
+```
+
+### With `pipx` (isolated environment, binary on PATH)
+
+```bash
+pipx install "git+https://github.com/Siin0pe/bubblepwn.git"
+bubblepwn                     # launch the shell from anywhere
+```
+
+### Verify
+
+```bash
+bubblepwn --version
+bubblepwn modules
+```
+
+### Dump artefacts
+
+Reports, checkpoints, ES dumps, and the SQLite rebuild land under `./out/` by
+default — run the tool in whichever working directory you want the artefacts
+to be written to.
 
 ## Documentation
 
