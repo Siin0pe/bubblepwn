@@ -30,6 +30,21 @@ _RE_WATCHER_PAGE_ID = re.compile(r'"([a-zA-Z0-9]{3,10})":\{"statics":\{"title":t
 _RE_WATCHER_PROPS_TITLE = re.compile(r'"props":\{"title":"([^"]+)"')
 _RE_NAMED_BLOCK = re.compile(r'"name":"([a-zA-Z_][a-zA-Z0-9_ .\-]{1,80})"')
 
+# DefaultValues entries in bubble_run_derived are the closest the bundle
+# gets to a field catalogue. Each entry looks like:
+#   {"name":"<raw_db_column>","value":"<bubble_type>","display":"<label>","deleted":null}
+# The raw name is the DB column (encoded with the type as a suffix).
+# The value is the canonical type (text, number, boolean, date, list.text,
+# custom.<type>, list.custom.<type>, option.<set>, ...).
+# The display is the editor-facing human label.
+_RE_DEFAULT_VALUES_ENTRY = re.compile(
+    r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*'
+    r'"value"\s*:\s*"([^"]+)"\s*,\s*'
+    r'"display"\s*:\s*"([^"]*)"\s*'
+    r'(?:,\s*"deleted"\s*:\s*(?:null|true|false))?\s*\}',
+    re.DOTALL,
+)
+
 # Human-readable element type detection — Bubble ships properties on elements
 # that strongly correlate with the element kind.
 _ELEMENT_TYPE_HINTS = {
@@ -65,6 +80,40 @@ def parse_fields(content: str) -> list[tuple[str, str]]:
     for m in _RE_FIELD.finditer(content):
         seen.add((m.group(1), m.group("type")))
     return sorted(seen)
+
+
+def parse_field_triples(content: str) -> list[dict[str, str]]:
+    """Extract (name, value, display) triples from ``DefaultValues``.
+
+    This is the richest field catalogue present in a Bubble ``static.js``
+    bundle. Every entry here is a field that Bubble may default at runtime
+    — covering every custom data type and the ``user`` type. Returns a
+    deduplicated list preserving first-seen order.
+
+    ``name``    — the raw DB column name (e.g. ``email___text``,
+                  ``client_cr_ateur_custom_clients_base``). This encodes
+                  the field type as a suffix.
+    ``value``   — the canonical Bubble type (``text``, ``number``,
+                  ``boolean``, ``date``, ``image``, ``file``,
+                  ``option.<set>``, ``custom.<type>``, ``list.<anything>``).
+    ``display`` — the editor-facing human label.
+
+    The owning data type is **not** encoded in these entries — the bundle
+    never exposes a ``type → fields`` mapping.
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for m in _RE_DEFAULT_VALUES_ENTRY.finditer(content):
+        name = m.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append({
+            "name": name,
+            "value": m.group(2),
+            "display": m.group(3),
+        })
+    return out
 
 
 def parse_hardcoded_plugins(content: str) -> list[str]:

@@ -56,10 +56,20 @@ def _harvest_static(ctx: Context, static_text: str, source_tag: str) -> int:
     # the output regardless of whether the current user is logged in.
     ctx.schema.upsert_type("user", source=source_tag)
 
+    # 1) Light pool: (field_name, field_type) from the triple-underscore regex
     pool = ctx.settings.setdefault("_field_pool", set())
     before = len(pool)
     for fname, ftype in static_js.parse_fields(static_text):
         pool.add((fname, ftype))
+
+    # 2) Rich pool: (name, value, display) triples from DefaultValues —
+    #    includes human labels + canonical Bubble type strings
+    #    (list.custom.X, option.X, etc.). Stored as a dict keyed by the
+    #    raw DB column so later snapshots can merge without dupes.
+    rich = ctx.settings.setdefault("_field_triples", {})
+    for triple in static_js.parse_field_triples(static_text):
+        rich.setdefault(triple["name"], triple)
+
     return len(pool) - before
 
 
@@ -93,8 +103,13 @@ class DataTypes(Module):
     needs_auth = False
     category = "recon"
     subcommands = ()
-    flags = ("--probe", "--fetch-all", "--export-type <name>")
-    example = "run datatypes --probe"
+    flags = (
+        "--probe",
+        "--fetch-all",
+        "--list-fields",
+        "--export-type <name>",
+    )
+    example = "run datatypes --probe --list-fields"
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:
@@ -105,6 +120,7 @@ class DataTypes(Module):
 
         probe = bool(flags.get("probe", False))
         fetch_all = bool(flags.get("fetch_all", False))
+        list_fields = bool(flags.get("list_fields", False))
         export_type = flags.get("export_type")
 
         # 1. Snapshot current page
@@ -150,7 +166,53 @@ class DataTypes(Module):
             await self._export_type(ctx, api, str(export_type))
 
         self._render(ctx)
+        if list_fields:
+            self._render_field_pool(ctx)
         self._push_findings(ctx)
+
+    def _render_field_pool(self, ctx: Context) -> None:
+        from rich.table import Table
+
+        rich_pool: dict[str, dict[str, str]] = (
+            ctx.settings.get("_field_triples") or {}
+        )
+        if not rich_pool:
+            console.print(
+                "[yellow]No field triples captured from static.js.[/] "
+                "(The DefaultValues block may not be present on this page — "
+                "try `run pages --fetch-all` first to enrich the bundle cache.)"
+            )
+            return
+
+        # Sort by display label (fall back to name when display is empty)
+        entries = sorted(
+            rich_pool.values(),
+            key=lambda e: (e.get("display") or e.get("name") or "").lower(),
+        )
+
+        panel(
+            "Fields discovered in static.js",
+            f"{len(entries)} field(s) in the DefaultValues catalogue · "
+            "owning type not encoded in the bundle",
+            style="cyan",
+        )
+        table = Table(header_style="bold cyan", border_style="dim")
+        table.add_column("Display label", overflow="fold")
+        table.add_column("Value (Bubble type)", style="magenta", no_wrap=True)
+        table.add_column("Raw DB column", style="dim", overflow="fold")
+        for e in entries:
+            table.add_row(
+                e.get("display") or "[dim]—[/]",
+                e.get("value") or "-",
+                e.get("name") or "-",
+            )
+        console.print(table)
+        console.print(
+            "[dim]Ownership note: these fields are listed flat in "
+            "`DefaultValues` without their parent type. To attach a field "
+            "to a specific type, run `run datatypes --probe` (Data API) or "
+            "match the `value` column against known type refs.[/]"
+        )
 
     async def _probe_meta(self, ctx: Context, api: BubbleAPI) -> None:
         from bubblepwn.bubble.parse.meta import parse_meta
