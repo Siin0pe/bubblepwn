@@ -1,0 +1,12 @@
+# Plugins to flag as deprecated / abandoned / historically vulnerable.
+# Conservative starter list — extend per your own research. Each line is a
+# Bubble plugin NAME (first-party) or timestamp ID (third-party).
+#
+# Format: <name_or_id>  [severity]  [note]
+#
+# Severities: info | low | medium | high
+
+# First-party — superseded
+# (leave empty for now; all first-party plugins listed by static.js are from Bubble itself)
+
+# Historical reports — extend as new CVEs / forum posts surface.

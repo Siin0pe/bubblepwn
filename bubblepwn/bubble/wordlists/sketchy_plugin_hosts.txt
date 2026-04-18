@@ -1,0 +1,53 @@
+# Hosts known for data-collection / analytics / tracking.
+# Appearing in a Bubble app's third_party_script_hosts means user data is
+# being exfiltrated client-side — relevant, not always "malicious", but
+# worth flagging in a pentest report.
+
+# — Analytics / product analytics
+www.googletagmanager.com
+www.google-analytics.com
+ssl.google-analytics.com
+stats.g.doubleclick.net
+cdn.mxpnl.com
+api.mixpanel.com
+static.hotjar.com
+www.hotjar.com
+in.hotjar.com
+cdn.amplitude.com
+api.amplitude.com
+api2.amplitude.com
+cdn.segment.com
+api.segment.io
+cdn.heapanalytics.com
+heapanalytics.com
+cdn.fullstory.com
+rs.fullstory.com
+www.clarity.ms
+
+# — Ad tech
+www.googleadservices.com
+googleads.g.doubleclick.net
+connect.facebook.net
+www.facebook.com/tr
+analytics.tiktok.com
+px.ads.linkedin.com
+static.ads-twitter.com
+bat.bing.com
+
+# — Session replay
+cdn.logrocket.io
+cdn.lr-ingest.io
+cdn.smartlook.com
+rec.smartlook.com
+
+# — Error / APM
+browser.sentry-cdn.com
+*.ingest.sentry.io
+cdn.bugsnag.com
+notify.bugsnag.com
+js-agent.newrelic.com
+bam.nr-data.net
+
+# — Misc "script from random S3 bucket" (the classic risk)
+# Any *.s3.amazonaws.com host appearing in third_party_script_hosts deserves
+# attention; we special-case this pattern in the module.

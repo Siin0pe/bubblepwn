@@ -1,0 +1,50 @@
+# Bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtualenv
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.ruff_cache/
+
+# bubblepwn runtime artefacts
+out/
+.bubblepwn_history
+site_dump/
+site_dump.zip
+bubble_session.json
+
+# Secrets / research material (never commit)
+*.env
+*.pem
+*.key
+secrets/
+research/
