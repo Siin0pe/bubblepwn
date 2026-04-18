@@ -214,6 +214,7 @@ file extension:
 |---|---|
 | `BUBBLEPWN_LOCAL_DUMP=<dir>` | Offline mode. HTTP fetches fall back to files in that directory when a matching path exists — useful for regression tests against a cached mirror. |
 | `BUBBLEPWN_CACHE_DIR=<dir>`  | Override the default bundle cache location (`~/.cache/bubblepwn/bundles`). |
+| `BUBBLEPWN_NO_UPDATE_CHECK=1` | Disable the passive PyPI update check at startup. By default, bubblepwn polls `pypi.org/pypi/bubblepwn/json` once every 24 h (cached in `~/.cache/bubblepwn/version_check.json`) and prints a one-line banner if a newer release exists. Also auto-skipped when `stdout` is not a TTY. |
 
 ## Contributing
 

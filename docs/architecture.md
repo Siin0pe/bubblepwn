@@ -9,11 +9,12 @@ bubblepwn/
 ├── __main__.py          entry point
 ├── cli.py               Typer app (subcommands + root callback)
 ├── shell.py             interactive REPL (prompt_toolkit)
-├── ui.py                Rich console helpers (banner, tables, panels)
+├── ui.py                Rich console helpers (banner, tables, panels, progress)
 ├── config.py            pydantic `Settings` (env + .env)
 ├── context.py           `Context` singleton: target, session, findings, schema
-├── http.py              shared async HTTP client with rate-limiter
+├── http.py              shared async HTTP client (retry + rate-limiter)
 ├── logging.py           structlog + Rich handler
+├── update_check.py      passive PyPI update check (24h cache, TTY + env-var guards)
 ├── bubble/              Bubble-specific helpers (domain layer)
 │   ├── api.py           `BubbleAPI`: meta, obj, wf, elasticsearch
 │   ├── bundle.py        download + cache of /package/* bundles
@@ -21,6 +22,7 @@ bubblepwn/
 │   ├── schema.py        pydantic models (BubbleType, Field, Page, Element, Plugin)
 │   ├── secrets.py       regex rules + scanner
 │   ├── key_verify.py    Google Maps key verification
+│   ├── plugin_catalog.py first-party catalogue + live marketplace enrichment
 │   ├── es/              Elasticsearch endpoints
 │   │   ├── crypto.py        PBKDF2-MD5 × 7 + AES-CBC + wrap_triple / unwrap_triple
 │   │   ├── payload.py       search / aggregate / maggregate builders
@@ -169,18 +171,39 @@ can consume the JSON without knowing the Python types.
 
 | Artefact | Default path | Override |
 |---|---|---|
-| Bundle cache        | `~/.cache/bubblepwn/bundles/`     | `BUBBLEPWN_CACHE_DIR` |
-| REPL history        | `~/.bubblepwn_history`            | — |
-| ES dumps            | `./out/<host>/es/*.jsonl`         | — |
-| Checkpoints         | `./out/<host>/checkpoints/*.json` | — |
-| Reports             | wherever `report`/`--export` points | — |
+| Bundle cache        | `~/.cache/bubblepwn/bundles/`           | `BUBBLEPWN_CACHE_DIR` |
+| Version-check cache | `~/.cache/bubblepwn/version_check.json` | `XDG_CACHE_HOME` |
+| REPL history        | `~/.bubblepwn_history`                  | — |
+| ES dumps            | `./out/<host>/es/*.jsonl`               | — |
+| Checkpoints         | `./out/<host>/checkpoints/*.json`       | — |
+| SQLite rebuild      | `./out/<host>/es.sqlite`                | positional arg |
+| Reports             | wherever `report`/`--export` points     | — |
 
 ## Testing posture
 
-No test suite ships yet. Two approaches are used in development:
+Unit tests live under `tests/` and run in CI on Python 3.11 / 3.12 / 3.13.
+Run locally with `pytest tests/ -q` (dev deps: `pip install -e .[dev]`).
 
-- **Round-trip crypto tests**: `crypto.wrap_triple` / `unwrap_triple` on
-  known-good inputs to confirm server compatibility.
-- **Offline replay**: set `BUBBLEPWN_LOCAL_DUMP` to a mirror directory
-  (produced by any static dumper of your choice) to drive the modules
-  without touching the live target.
+Current coverage (by file):
+
+- `test_crypto.py` — round-trip wrap/unwrap, non-determinism, wrong-appname
+  protection
+- `test_context.py` — singleton reset, host-change purges findings + schema
+- `test_parse_flags.py` — flag parser edge cases
+- `test_http_retry.py` — retry on 503 / 4xx / timeout via `httpx.MockTransport`
+- `test_safe_path_segment.py` — path-traversal sanitiser regression guard
+- `test_secrets_scan.py` — Stripe / Google key detection + dedup
+- `test_plugin_catalog.py` — timestamp-ID decoding, catalogue integrity,
+  `og:*` parsing, marketplace enrichment against `MockTransport`
+- `test_update_check.py` — cache round-trip, stale-cache refetch,
+  env-var + non-TTY skip
+- `test_progress_feedback.py` — `snapshot_page(progress_cb=...)` contract
+- `test_datatypes_render.py` — `--list-fields` summary vs `--show-fields`
+  per-type blocks, `--type` filter
+
+`Context._reset()` drops the singleton between tests; `XDG_CACHE_HOME`
+can be pointed at `tmp_path` to isolate the version-check cache.
+
+For end-to-end smoke testing against a target without HTTP, set
+`BUBBLEPWN_LOCAL_DUMP` to a mirror directory — every bundle / page fetch
+falls back to that tree when a matching file exists.
