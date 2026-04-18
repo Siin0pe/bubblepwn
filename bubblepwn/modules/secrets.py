@@ -34,8 +34,25 @@ class Secrets(Module):
     needs_auth = False
     category = "recon"
     subcommands = ()
-    flags = ("--include-runtime", "--fetch-all", "--verify-keys", "--min-severity <lvl>")
+    flags = (
+        ("--include-runtime", "also fetch and scan /package/run_js/ "
+                              "(heavier, rarely leaks more)"),
+        ("--fetch-all", "scan every known page's bundles, not just the "
+                        "current one"),
+        ("--verify-keys", "actively probe detected keys against their "
+                          "vendor APIs (Stripe, Sendgrid, Postmark…) to "
+                          "confirm they are live"),
+        ("--min-severity <lvl>", "filter output — info | low | medium | "
+                                 "high | critical (default: low)"),
+    )
     example = "run secrets --verify-keys"
+    long_help = (
+        "Regex-scans HTML + static.js + dynamic.js (+ run.js with "
+        "--include-runtime) for AWS keys, Stripe/Sendgrid/Postmark "
+        "tokens, Airtable bearer tokens, Google Maps keys, JWTs, and "
+        "URLs with embedded secrets. `--verify-keys` confirms whether "
+        "the hit is live — false-positive remover."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

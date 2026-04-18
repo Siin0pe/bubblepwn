@@ -104,13 +104,27 @@ class DataTypes(Module):
     category = "recon"
     subcommands = ()
     flags = (
-        "--probe",
-        "--fetch-all",
-        "--list-fields",
-        "--show-fields",
-        "--export-type <name>",
+        ("--probe", "call /api/1.1/meta and /api/1.1/obj/<type> to map "
+                    "per-type fields (confirms privacy rules too)"),
+        ("--fetch-all", "re-snapshot every known page so DefaultValues from "
+                        "other pages' static.js get merged"),
+        ("--list-fields", "show the full flat catalogue of fields seen in "
+                          "static.js DefaultValues (owner type unknown)"),
+        ("--show-fields", "show one table per type listing its mapped fields, "
+                          "with human labels from static.js when available"),
+        ("--export-type <name>", "paginate /api/1.1/obj/<name> and save every "
+                                 "record onto the type's sample_records"),
     )
     example = "run datatypes --probe --show-fields"
+    long_help = (
+        "Sources, in priority order: (1) static.js — `custom.*` refs + the "
+        "DefaultValues catalogue (raw DB column, canonical Bubble type, "
+        "display label); (2) /api/1.1/init/data — field shape for the "
+        "current user type; (3) --probe → /api/1.1/meta + /obj/<type> "
+        "for privacy rules + a sample record per type. The triple-"
+        "underscore fields seen in static.js are NOT attached to a type "
+        "(Bubble doesn't encode ownership) — use --probe to attach them."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

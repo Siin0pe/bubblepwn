@@ -420,6 +420,14 @@ class Fingerprint(Module):
     subcommands = ()
     flags = ()
     example = "run fingerprint"
+    long_help = (
+        "Fetches the target home page and its static.js/dynamic.js bundles, "
+        "then extracts every Bubble-specific signal: app_id + env_name, "
+        "Bubble version, server region, logged-in user block, Amplitude / "
+        "Stripe / Postmark / Sendgrid keys, S3 bucket, hardcoded plugin set "
+        "and third-party plugin IDs. Always step 1 — most other modules "
+        "rely on ctx.schema being populated here."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

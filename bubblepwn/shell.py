@@ -31,54 +31,85 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     (
         "Quick start",
         [
-            ("target <url>", "step 1 — point at the target app"),
-            ("flow crypto", "step 2 — prove the Elasticsearch 0-day (core demo)"),
-            ("flow full --export out/audit.html", "step 3 — complete audit + report"),
+            ("target <url>", "step 1 — point at the target app (sets "
+                              "ctx.target, resets the schema)"),
+            ("flow crypto", "step 2 — fingerprint → datatypes → forge an "
+                             "ES probe (proves the 0-day works)"),
+            ("flow full --export out/audit.html --open",
+             "step 3 — run every recon/audit/exploit module and open the "
+             "rendered HTML report"),
         ],
     ),
     (
         "Target & session",
         [
-            ("target <url>", "set the current target (resets the schema)"),
-            ("session load <file>", "load cookies from a JSON file"),
-            ("session save <file>", "persist the current session"),
-            ("session show", "display the loaded session"),
-            ("session clear", "drop the loaded session"),
+            ("target <url>",
+             "set the current target (e.g. `target https://app.example.com`); "
+             "wipes the previous schema"),
+            ("target",
+             "with no argument, print the currently-set target"),
+            ("session load <file>",
+             "load cookies from a JSON file — use to run authenticated "
+             "probes (IDOR, workflows compare, …)"),
+            ("session save <file>",
+             "persist the current session to disk"),
+            ("session show",
+             "display the loaded session (cookies + any stored storage)"),
+            ("session clear",
+             "drop the loaded session — subsequent calls go back to anon"),
         ],
     ),
     (
         "Discover & run",
         [
-            ("modules", "list every module grouped by phase (recon / audit / exploit)"),
-            ("help <module>", "subcommands + flags + example for a single module"),
-            ("help flow", "detailed breakdown of every flow preset"),
-            ("run <module> [args...]", "run one module against the current target"),
-            (
-                "flow <preset> [--export <path>] [--open] [--checkpoint]",
-                "chain modules for a whole phase",
-            ),
+            ("modules",
+             "list every registered module grouped by phase (recon / audit "
+             "/ exploit) with its one-line description and example"),
+            ("help <module>",
+             "detailed help for one module — subcommands, flags, notes, "
+             "and a copy-paste example"),
+            ("help flow",
+             "break down every flow preset into its ordered list of "
+             "module calls"),
+            ("run <module> [args...]",
+             "run one module against the current target — `args` are "
+             "forwarded to the module (subcommand first, then flags)"),
+            ("flow <preset> [--export <path>] [--open] [--checkpoint]",
+             "chain a curated list of modules for a whole phase; "
+             "`--export` writes a report at the end, `--open` launches "
+             "it in the browser, `--checkpoint` snapshots findings "
+             "after each step"),
         ],
     ),
     (
         "Output & reporting",
         [
-            ("context", "show the current state (target, session, schema counts)"),
-            ("findings", "list findings accumulated this session"),
-            (
-                "report <path> [--open]",
-                "export a structured report — format picked by extension "
-                "([cyan].md[/] | [cyan].html[/] | [cyan].json[/]); "
-                "[cyan]--open[/] launches it in the default browser",
-            ),
-            ("export <path>", "raw JSON dump of findings + target"),
+            ("context",
+             "show the live state: target, session, findings count, "
+             "settings bag (ctx.settings)"),
+            ("findings",
+             "list all findings accumulated this session (# · severity · "
+             "module · title)"),
+            ("report <path> [--open]",
+             "export a structured report — format picked by extension "
+             "([cyan].md[/] · [cyan].html[/] · [cyan].json[/]); "
+             "[cyan]--open[/] launches it in the default browser"),
+            ("export <path>",
+             "raw JSON dump of findings + target — machine-readable, "
+             "no formatting"),
         ],
     ),
     (
         "Utility",
         [
-            ("set <key> <value>", "runtime setting (stored on [dim]ctx.settings[/])"),
-            ("clear", "clear the screen"),
-            ("exit | quit | Ctrl-D", "leave the shell"),
+            ("set <key> <value>",
+             "write a runtime setting (stored on [dim]ctx.settings[/]) — "
+             "modules read from the same dict"),
+            ("clear",
+             "clear the screen"),
+            ("exit | quit | Ctrl-D",
+             "leave the shell (session is NOT auto-saved — use "
+             "`session save` first if needed)"),
         ],
     ),
 ]
@@ -86,7 +117,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 _HELP_PRESETS: list[tuple[str, str, str, str]] = [
     (
         "crypto", "red bold",
-        "demonstrate the Elasticsearch crypto 0-day ([bold]the core product[/])",
+        "demonstrate the Elasticsearch crypto 0-day",
         "fingerprint → datatypes → es-audit probe → es-audit analyze --field-leak",
     ),
     (

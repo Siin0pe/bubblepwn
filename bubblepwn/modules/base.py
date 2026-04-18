@@ -1,9 +1,30 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, Union
 
 from bubblepwn.context import Context
+
+#: A single help entry — either the raw syntax (``str``) or a
+#: ``(syntax, description)`` tuple. Modules should prefer the tuple form so the
+#: ``help <module>`` renderer can show what each flag/subcommand actually does.
+HelpEntry = Union[str, tuple[str, str]]
+
+
+def help_rows(entries: Iterable[HelpEntry]) -> list[tuple[str, str]]:
+    """Normalize a mix of ``str`` / ``(syntax, desc)`` entries into rows.
+
+    Plain strings get an empty description. This keeps the rendering code
+    simple while allowing legacy modules (no description yet) to coexist.
+    """
+    rows: list[tuple[str, str]] = []
+    for e in entries:
+        if isinstance(e, tuple):
+            syntax, desc = e
+            rows.append((str(syntax), str(desc)))
+        else:
+            rows.append((str(e), ""))
+    return rows
 
 
 def parse_flags(argv: list[str]) -> tuple[dict[str, Any], list[str]]:
@@ -57,9 +78,15 @@ class Module(ABC):
     description: str = ""
     needs_auth: bool = False
     category: str = "recon"
-    subcommands: tuple[str, ...] = ()
-    flags: tuple[str, ...] = ()
+    # Each entry is either a raw syntax string or a ``(syntax, description)``
+    # tuple. Tuple form is strongly preferred so ``help <module>`` can explain
+    # what the subcommand / flag actually does.
+    subcommands: tuple[HelpEntry, ...] = ()
+    flags: tuple[HelpEntry, ...] = ()
     example: str = ""
+    #: Longer free-form help rendered as a block at the bottom of
+    #: ``help <module>``. Optional — short modules can leave it empty.
+    long_help: str = ""
 
     @abstractmethod
     async def run(self, ctx: Context, **kwargs) -> None: ...

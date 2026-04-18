@@ -32,10 +32,26 @@ class ApiProbe(Module):
     category = "audit"
     subcommands = ()
     flags = (
-        "--include-test", "--methods", "--idor", "--workflows",
-        "--enumerate", "--max-types <N>",
+        ("--include-test", "also probe /version-test/ (dev branch — "
+                           "often more permissive than live)"),
+        ("--methods", "try OPTIONS + unsafe verbs (POST/PATCH/DELETE) "
+                      "on each type endpoint to detect write exposure"),
+        ("--idor", "for each readable type, fetch 2 records and attempt "
+                   "cross-user access to check privacy rule scoping"),
+        ("--workflows", "invoke every no-auth workflow found in "
+                        "/api/1.1/meta with an empty body"),
+        ("--enumerate", "list the full `response.results[]` of each "
+                        "readable type (not just shape)"),
+        ("--max-types <N>", "cap the number of types probed via "
+                            "/api/1.1/obj/ (default: 50)"),
     )
     example = "run api-probe --include-test --idor"
+    long_help = (
+        "Walks the Bubble Data API + Workflow API surface: "
+        "/api/1.1/meta (schema), /api/1.1/obj/<type> (per-type read), "
+        "/api/1.1/wf/<name> (workflow invoke), /api/1.1/swagger.json. "
+        "Pair with --methods + --idor for a full privacy-rule audit."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

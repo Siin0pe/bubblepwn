@@ -75,9 +75,31 @@ class ConfigAudit(Module):
     )
     needs_auth = False
     category = "audit"
-    subcommands = ("headers", "editor", "version-diff", "all")
-    flags = ("--app-id <slug>", "--page <name>", "--pages a,b,c")
+    subcommands = (
+        ("headers", "GET the target and grade its security headers "
+                    "(CSP, HSTS, X-Frame-Options, Referrer-Policy, …)"),
+        ("editor", "probe bubble.io/page?id=<app>&version=live|test to "
+                   "detect a publicly-viewable editor (critical leak: "
+                   "workflows + data types + privacy rules)"),
+        ("version-diff", "compare /<page> vs /version-test/<page> — "
+                         "catches unreleased features accessible on prod"),
+        ("all", "run headers → editor → version-diff in order"),
+    )
+    flags = (
+        ("--app-id <slug>", "override app slug (defaults to the one "
+                            "found by fingerprint)"),
+        ("--page <name>", "page to probe for editor check "
+                          "(default: index)"),
+        ("--pages a,b,c", "comma-separated list of pages to check in "
+                          "version-diff"),
+    )
     example = "run config-audit all"
+    long_help = (
+        "Groups three orthogonal configuration checks: (1) HTTP security "
+        "headers; (2) whether the Bubble editor is set to 'Anyone can "
+        "view'; (3) whether the /version-test/ branch is accessible "
+        "anonymously and diverges from live. Run `all` for a full sweep."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

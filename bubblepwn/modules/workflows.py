@@ -89,12 +89,39 @@ class Workflows(Module):
     )
     needs_auth = False
     category = "exploit"
-    subcommands = ("analyze", "invoke <name>", "fuzz <name>", "compare <name>")
+    subcommands = (
+        ("analyze", "enumerate exposed backend workflows from meta + "
+                    "wordlist, extract params from bundles, detect "
+                    "temp-password emails and no-auth endpoints"),
+        ("invoke <name>", "call /api/1.1/wf/<name> once with the JSON "
+                          "body from --body (or `{}`)"),
+        ("fuzz <name>", "brute-force parameter names for a given "
+                        "workflow to surface hidden required fields"),
+        ("compare <name>", "call the same workflow anon and "
+                           "authenticated — diff responses to find "
+                           "auth-bypass / privilege-escalation bugs"),
+    )
     flags = (
-        "--wordlist <file>", "--max <N>", "--deep-params",
-        "--include-test", "--body '<json>'", "--branch test", "--auth",
+        ("--wordlist <file>", "custom workflow name list — one per line "
+                              "(default: built-in Bubble list)"),
+        ("--max <N>", "cap the number of workflow names probed "
+                      "(default: 200)"),
+        ("--deep-params", "analyze: also fetch dynamic.js to widen the "
+                          "param-extraction regex"),
+        ("--include-test", "also probe /version-test/ branch"),
+        ("--body '<json>'", "invoke / fuzz: JSON payload sent to the "
+                            "workflow (default: `{}`)"),
+        ("--branch test", "target the /version-test/ branch"),
+        ("--auth", "use ctx.session cookies on the request "
+                   "(implicit for `compare`)"),
     )
     example = "run workflows analyze --deep-params"
+    long_help = (
+        "`analyze` is the main read-only pass: enumerates endpoints, "
+        "surfaces params, classifies severity (temp-password emails, "
+        "no-auth, test-branch-only…). `invoke` / `fuzz` / `compare` are "
+        "active — only run them with authorization."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

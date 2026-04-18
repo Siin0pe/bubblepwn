@@ -79,9 +79,30 @@ class Files(Module):
     )
     needs_auth = False
     category = "audit"
-    subcommands = ("enumerate", "test-public", "upload-probe", "type-fuzz")
-    flags = ("--max <N>", "--confirm")
+    subcommands = (
+        ("enumerate", "collect every S3 / CDN file URL seen in HTML, "
+                      "bundles, or previously-dumped records"),
+        ("test-public", "GET each discovered URL anonymously to confirm "
+                        "the bucket / CDN is world-readable"),
+        ("upload-probe", "call /fileupload without auth to detect open "
+                         "uploads (anon can drop files into the bucket)"),
+        ("type-fuzz", "actually upload small payloads of different MIME "
+                      "types — requires --confirm (writes to the bucket)"),
+    )
+    flags = (
+        ("--max <N>", "cap the number of URLs tested by test-public "
+                      "(default: 40)"),
+        ("--confirm", "authorize the mutating test-fuzz subcommand — "
+                      "without it, type-fuzz refuses to run"),
+    )
     example = "run files enumerate && run files test-public"
+    long_help = (
+        "Run `enumerate` first to populate the URL set — other "
+        "subcommands reuse ctx.settings['_files_discovered']. "
+        "`upload-probe` and `type-fuzz` only make sense when you have "
+        "written authorization: type-fuzz leaves real files in the "
+        "target's S3 bucket."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

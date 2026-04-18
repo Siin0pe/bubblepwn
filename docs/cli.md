@@ -68,7 +68,24 @@ the shared flag parser (`--key value`, `--key=value`, `--flag`).
 bubblepwn ❯ run fingerprint
 bubblepwn ❯ run secrets --verify-keys --min-severity medium
 bubblepwn ❯ run es-audit analyze --compare
+bubblepwn ❯ run es-audit analyze --type user --field-leak   # single-table audit
+bubblepwn ❯ run datatypes --probe --show-fields             # detailed per-type fields
+bubblepwn ❯ run es-audit dumpall --confirm --sqlite         # dump + rebuild SQLite
 ```
+
+### Focused single-table audit
+
+Every heavy subcommand of `es-audit` now accepts `--type <name>` to
+restrict work to one data type:
+
+```
+bubblepwn ❯ run es-audit analyze --type user --field-leak
+bubblepwn ❯ run es-audit dumpall --type user --confirm
+bubblepwn ❯ run es-audit sqlite --type user
+```
+
+Handy for pointed audits (e.g. only the `user` table) or for smoke-
+testing a specific finding before rerunning a full flow.
 
 ### `flow <preset> [--export <path>] [--checkpoint]`
 
@@ -76,9 +93,9 @@ Chain several modules in sequence.
 
 | Preset   | Modules (in order) |
 |---|---|
-| **crypto** | **fingerprint, datatypes, es-audit probe, es-audit analyze --field-leak** — the core product: demonstrate the ES crypto 0-day |
+| **crypto** | **fingerprint, datatypes, es-audit probe, es-audit analyze --field-leak**  |
 | recon    | fingerprint, plugins, pages, datatypes, elements, secrets |
-| audit    | config-audit all, plugin-audit all, api-probe, files (enumerate, test-public, upload-probe) |
+| audit    | config-audit all, plugin-audit all, api-probe, files (enumerate, test-public, uplod-probe) |
 | exploit  | es-audit analyze, workflows analyze |
 | full     | recon then audit then exploit |
 

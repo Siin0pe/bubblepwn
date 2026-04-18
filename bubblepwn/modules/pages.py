@@ -58,8 +58,20 @@ class Pages(Module):
     needs_auth = False
     category = "recon"
     subcommands = ()
-    flags = ("--fetch-all", "--include-test", "--wordlist <file>")
+    flags = (
+        ("--fetch-all", "snapshot every discovered page to harvest its "
+                        "static.js (expands the type/field catalogue)"),
+        ("--include-test", "also probe the /version-test/ branch (if any)"),
+        ("--wordlist <file>", "custom path list — one relative path per line "
+                              "(defaults to the built-in Bubble wordlist)"),
+    )
     example = "run pages --fetch-all"
+    long_help = (
+        "Wordlist-probes the live app for standard Bubble page paths "
+        "(index, login, dashboard, admin, …) and pulls the page_name out "
+        "of each hit's HTML. Pair with `--fetch-all` so other modules can "
+        "harvest page-specific bundles later."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

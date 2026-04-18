@@ -149,34 +149,66 @@ def modules_table(mods: Iterable) -> None:
         console.print(table)
 
 
+_CATEGORY_BORDER = {"recon": "green", "audit": "yellow", "exploit": "red"}
+
+
+def _render_help_rows(rows: list[tuple[str, str]], key_style: str) -> Table:
+    """Two-column ``syntax | description`` table, no header, no border."""
+    table = Table(
+        show_header=False,
+        box=None,
+        padding=(0, 2),
+        pad_edge=False,
+    )
+    table.add_column(style=key_style, no_wrap=True)
+    table.add_column(overflow="fold")
+    for syntax, desc in rows:
+        table.add_row(syntax, desc or "[dim]—[/]")
+    return table
+
+
 def module_help(mod) -> None:
-    """Render the detailed help for a single module."""
-    body_lines = [
-        f"[bold cyan]{mod.name}[/]  [dim]· {mod.category}[/]",
-        "",
-        mod.description,
-        "",
-    ]
+    """Render the detailed help for a single module.
+
+    Subcommands and flags are shown as tables with a one-line description per
+    entry, pulled from each module's ``(syntax, description)`` tuple form.
+    """
+    from bubblepwn.modules.base import help_rows
+
+    border = _CATEGORY_BORDER.get(mod.category, "cyan")
+
+    console.print()
+    console.print(
+        f"[bold cyan]{mod.name}[/]  "
+        f"[dim]· {mod.category}"
+        + ("  · needs auth" if mod.needs_auth else "")
+        + "[/]"
+    )
+    console.print(f"[dim]{mod.description}[/]")
+    console.print()
+
     if mod.subcommands:
-        body_lines.append("[bold]Subcommands:[/]")
-        for sc in mod.subcommands:
-            body_lines.append(f"  • {sc}")
-        body_lines.append("")
+        console.print("[bold]Subcommands[/]  [dim]— first positional argument[/]")
+        console.print(_render_help_rows(help_rows(mod.subcommands), key_style="cyan"))
+        console.print()
+
     if mod.flags:
-        body_lines.append("[bold]Flags:[/]")
-        for fl in mod.flags:
-            body_lines.append(f"  • {fl}")
-        body_lines.append("")
+        console.print("[bold]Flags[/]  [dim]— use `--key value` or `--flag`[/]")
+        console.print(_render_help_rows(help_rows(mod.flags), key_style="magenta"))
+        console.print()
+
+    if mod.long_help:
+        console.print(Panel.fit(
+            mod.long_help.strip(),
+            title="notes",
+            border_style=border,
+        ))
+        console.print()
+
     if mod.example:
-        body_lines.append("[bold]Example:[/]")
-        body_lines.append(f"  [dim]>[/] {mod.example}")
-    console.print(Panel.fit(
-        "\n".join(body_lines),
-        title=f"help · {mod.name}",
-        border_style={
-            "recon": "green", "audit": "yellow", "exploit": "red"
-        }.get(mod.category, "cyan"),
-    ))
+        console.print("[bold]Example[/]")
+        console.print(f"  [dim]>[/] [cyan]{mod.example}[/]")
+        console.print()
 
 
 def findings_table(findings: Iterable) -> None:

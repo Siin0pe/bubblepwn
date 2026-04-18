@@ -74,23 +74,37 @@ Classifies each plugin as `first_party`, `third_party`, `library`, or
 
 Lists Bubble custom data types and their fields.
 
-- **Flags**: `--probe`, `--fetch-all`, `--export-type <name>`
-- **Example**: `run datatypes --probe`
+- **Flags**: `--probe`, `--fetch-all`, `--list-fields`, `--show-fields`,
+  `--export-type <name>`
+- **Example**: `run datatypes --probe --show-fields`
 
-Sources:
+Sources, in priority order:
 
-1. `static.js` — `custom.<type_name>` references + triple-underscore field
-   convention (`<field>___<bubble_type>`).
-2. `/api/1.1/init/data` — populates the `user` type with the current user's
-   field names, inferring types from the key suffix convention.
-3. (`--probe`) `/api/1.1/meta` — canonical schema if the Data API is open.
-   Emits a **medium** finding if the endpoint responds.
+1. `static.js` — `custom.<type_name>` references + the **DefaultValues**
+   catalogue (a global list of `{name, value, display}` triples: raw DB
+   column, canonical Bubble type, human label). These field triples are
+   **not** attached to a specific type — Bubble does not encode ownership
+   in the bundle. Use `--list-fields` to view the flat catalogue.
+2. `/api/1.1/init/data` — populates the `user` type with the current
+   user's field names, inferring types from the key suffix convention.
+3. (`--probe`) `/api/1.1/meta` — canonical schema if the Data API is
+   open. Emits a **medium** finding if the endpoint responds.
 4. (`--probe`) `/api/1.1/obj/<type>?limit=1` — confirms privacy exposure
-   per type. Emits a **high** finding listing types readable anonymously.
-5. (`--fetch-all`) Refetches each known page's `static.js` and feeds it to
-   the parser to accumulate more types.
+   **and** extracts real field names from the returned record. Emits a
+   **high** finding listing types readable anonymously.
+5. (`--fetch-all`) Refetches each known page's `static.js` and merges
+   the types + field triples parsed from every page.
 6. (`--export-type <name>`) Paginates `/api/1.1/obj/<name>` anonymously
-   until exhaustion and stores all records in the schema's `sample_records`.
+   until exhaustion and stores every record on the schema's
+   `sample_records`.
+
+Rendering flags:
+
+- `--list-fields` — prints the flat DefaultValues catalogue (display
+  label · canonical type · raw DB column). Owner type is unknown.
+- `--show-fields` — prints one table per type that has mapped fields
+  (from `init/data` or `--probe`), merged with the DefaultValues
+  catalogue so each row shows the Bubble type + human label.
 
 ### `pages`
 
@@ -284,12 +298,13 @@ exposes them as six subcommands covering the full spectrum from
 proof-of-exploit to bulk exfiltration.
 
 - **Subcommands**: `probe`, `analyze`, `dumpone <type>`, `dumpall`,
-  `query <endpoint> '<json>'`, `encrypt '<json>'`,
+  `sqlite [path]`, `query <endpoint> '<json>'`, `encrypt '<json>'`,
   `decrypt <y> <x> <z>`
 - **Flags**: `--compare`, `--field-leak`, `--batch`, `--branch test`,
-  `--endpoint aggregate|search`, `--types t1,t2`, `--confirm`, `--auth`,
-  `--batch-size <N>`, `--max <N>`, `--appname <slug>`
-- **Example**: `run es-audit probe`
+  `--endpoint aggregate|search`, `--type <name>`, `--types t1,t2`,
+  `--confirm`, `--auth`, `--batch-size <N>`, `--max <N>`,
+  `--appname <slug>`, `--sqlite`
+- **Example**: `run es-audit analyze --type user --field-leak`
 
 #### `probe`
 
@@ -321,6 +336,12 @@ Findings:
 
 Flags:
 
+- `--type <name>` — **single-table mode**: run analyze against exactly
+  one type (skips the full schema iteration). Use this to focus an
+  audit on a specific table, e.g. `run es-audit analyze --type user
+  --field-leak`.
+- `--types a,b,c` — restrict to a comma-separated list of types
+  (overrides the schema-derived list).
 - `--compare` — also query with `ctx.session.cookies`; required for
   tautology / empty-equals-empty detection.
 - `--field-leak` — for every exposed type, pull one record via `/search`
@@ -329,8 +350,6 @@ Flags:
   additional **high** finding.
 - `--batch` — use `/maggregate` to batch all counts in a single HTTP
   request. Falls back to sequential on length mismatch.
-- `--types a,b,c` — restrict to a comma-separated list of types (overrides
-  the schema-derived list).
 - `--max-types <N>` — cap the number of types probed.
 
 #### `dumpone <type>`
@@ -344,8 +363,41 @@ Flags: `--batch-size <N>` (default 1000), `--max <N>` (cap records),
 
 #### `dumpall`
 
-Runs an aggregate pass to identify exposed types, then calls `dumpone` for
-each. Gated behind `--confirm` due to data-volume risk.
+Runs an aggregate pass to identify exposed types, then calls `dumpone`
+for each. Gated behind `--confirm` due to data-volume risk.
+
+Flags:
+
+- `--type <name>` / `--types a,b,c` — dump only a specific type or a
+  comma-separated list (skips the initial discovery sweep).
+- `--sqlite` — after the dump finishes, automatically build the SQLite
+  database (see `sqlite` subcommand below).
+- `--batch-size <N>`, `--max <N>`, `--auth` — forwarded to each
+  underlying `dumpone`.
+
+#### `sqlite [path]`
+
+Rebuild a SQLite database from the JSONL dumps in `out/<host>/es/`. One
+table per Bubble data type. Column types are inferred from Bubble's
+field naming convention (`_number`, `_boolean`, `_date`, `___<type>`)
+and from the JSON shape seen in the records.
+
+Reference-style Bubble fields (`<creator_id>__LOOKUP__<target_id>`) get
+a companion `<field>__ref_id` column containing the extracted target
+id — so foreign-key joins across tables are direct:
+
+```sql
+SELECT d.title_text, u.email_text
+FROM t_custom_doc d
+JOIN t_user u ON d."Created By__ref_id" = u._id;
+```
+
+Flags:
+
+- `--type <name>` — rebuild only a single type's table (must already
+  have a JSONL dump on disk).
+- Default output path: `out/<host>/es.sqlite`. Pass a positional path
+  to override.
 
 #### `query <endpoint> '<json>'`
 

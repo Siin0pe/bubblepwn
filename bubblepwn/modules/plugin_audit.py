@@ -61,9 +61,28 @@ class PluginAudit(Module):
     )
     needs_auth = False
     category = "audit"
-    subcommands = ("check", "leaks", "all")
-    flags = ("--list <file>", "--max-age-days <N>")
+    subcommands = (
+        ("check", "flag plugins listed in the deprecated/known-bad wordlist "
+                  "and plugins older than --max-age-days"),
+        ("leaks", "inspect plugin bundles for calls to external hosts — "
+                  "reveals client-side data exfiltration paths"),
+        ("all", "run check → leaks in order"),
+    )
+    flags = (
+        ("--list <file>", "extra deprecated-plugin list — one "
+                          "`<plugin_id> <severity> <note>` per line"),
+        ("--max-age-days <N>", "flag plugins whose last update is older "
+                               "than N days (default: 1095 / 3 years)"),
+    )
     example = "run plugin-audit all"
+    long_help = (
+        "Requires `run plugins` first to populate ctx.schema.plugins. "
+        "`check` cross-references each detected plugin against the "
+        "built-in deprecated list + your own --list if provided. "
+        "`leaks` greps bundles for external endpoints (third-party "
+        "analytics, webhooks, HTTP hooks) — anything the plugin pings "
+        "from the user's browser."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

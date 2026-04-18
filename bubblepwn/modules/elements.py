@@ -75,9 +75,22 @@ class Elements(Module):
     description = "Enumerate Bubble UI elements per page (static.js + dynamic.js)."
     needs_auth = False
     category = "recon"
-    subcommands = ("<page-name>",)
-    flags = ("--fetch-all",)
+    subcommands = (
+        ("<page-name>", "restrict enumeration to a single page (default: "
+                        "current page from fingerprint)"),
+    )
+    flags = (
+        ("--fetch-all", "snapshot every known page and merge elements "
+                        "across the whole app"),
+    )
     example = "run elements index"
+    long_help = (
+        "Pulls element names, types, and bindings from each page's "
+        "static.js + dynamic.js. Element type is inferred from Bubble's "
+        "property hints (button_text → Button, placeholder → Input, …). "
+        "Useful to map the UI surface onto the data model found by "
+        "`datatypes`."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:

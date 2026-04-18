@@ -41,8 +41,18 @@ class Plugins(Module):
     needs_auth = False
     category = "recon"
     subcommands = ()
-    flags = ("--page <name>",)
+    flags = (
+        ("--page <name>", "probe a specific page instead of index — plugin "
+                          "sets can differ per page"),
+    )
     example = "run plugins"
+    long_help = (
+        "Parses hardcoded_plugins[] references in static.js, header "
+        "<script src=\"…/plugin_main_headers_<id>/…\"> tags in the HTML, "
+        "and known first-party bundles. Each plugin is tagged as "
+        "`hardcoded` (built-in), `first-party`, `third-party`, or `cdn`. "
+        "Feeds plugin-audit."
+    )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:
