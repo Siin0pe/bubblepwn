@@ -110,12 +110,30 @@ class Elements(Module):
         else:
             pages_to_process = [ctx.schema.page_name_current or ""]
 
-        for page in pages_to_process:
-            with console.status(
-                f"[cyan]Analyzing page[/] {page or 'index'}…", spinner="dots"
-            ):
-                snap = await snapshot_page(ctx, page=page)
-            self._analyze_page(ctx, snap.page_name, snap.static_text, snap.dynamic_text)
+        if len(pages_to_process) >= 3:
+            from bubblepwn.ui import progress_iter
+            with progress_iter("Analyzing pages", len(pages_to_process)) as bar:
+                for page in pages_to_process:
+                    bar.set_description(f"page {page or 'index'}")
+                    snap = await snapshot_page(ctx, page=page)
+                    self._analyze_page(
+                        ctx, snap.page_name, snap.static_text, snap.dynamic_text
+                    )
+                    bar.advance()
+        else:
+            for page in pages_to_process:
+                with console.status(
+                    f"[cyan]Analyzing page[/] {page or 'index'}…", spinner="dots"
+                ) as st:
+                    snap = await snapshot_page(
+                        ctx, page=page,
+                        progress_cb=lambda m, p=page: st.update(
+                            f"[cyan]Analyzing page[/] {p or 'index'} — {m}"
+                        ),
+                    )
+                self._analyze_page(
+                    ctx, snap.page_name, snap.static_text, snap.dynamic_text
+                )
 
         self._render(ctx, pages_to_process)
         self._push_findings(ctx)

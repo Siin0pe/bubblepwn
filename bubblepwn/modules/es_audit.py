@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -813,6 +814,7 @@ class EsAudit(Module):
 
         total = 0
         from_ = 0
+        started = time.monotonic()
         with out_file.open("w", encoding="utf-8") as fh:
             with console.status(
                 f"[cyan]dumping[/] {raw_type} → {out_file.name}", spinner="dots"
@@ -834,8 +836,11 @@ class EsAudit(Module):
                         fh.write(json.dumps(h, ensure_ascii=False) + "\n")
                         total += 1
                     from_ += len(hits)
+                    elapsed = time.monotonic() - started
+                    rate = total / elapsed if elapsed > 0 else 0.0
                     status_widget.update(
-                        f"[cyan]dumping[/] {raw_type} — {total} records"
+                        f"[cyan]dumping[/] {raw_type} — "
+                        f"{total:,} records · [dim]{rate:.0f} rec/s[/]"
                     )
                     if resp.get("at_end") or not hits:
                         break
@@ -883,9 +888,13 @@ class EsAudit(Module):
         exposed = [(t, c) for t, c in counts.items() if c and c > 0]
         total_est = sum(c for _, c in exposed)
         console.print(
-            f"[bold]Will dump {len(exposed)} types · ~{total_est} records total[/]"
+            f"[bold]Will dump {len(exposed)} types · ~{total_est:,} records total[/]"
         )
-        for t, _ in exposed:
+        n = len(exposed)
+        for i, (t, cnt) in enumerate(exposed, 1):
+            console.print(
+                f"\n[bold cyan]━━━ [{i}/{n}] {t}[/]  [dim](~{cnt:,} records)[/]"
+            )
             await self._dumpone(ctx, anon, auth, app_version, t, flags)
 
     # ── sqlite ───────────────────────────────────────────────────────────
@@ -954,13 +963,19 @@ class EsAudit(Module):
             for f in jsonl_files:
                 type_name = f.stem
                 table = _safe_table_name(type_name)
-                bar.set_description(f"{table}")
+                size_bytes = f.stat().st_size
+                if size_bytes < 1024 * 1024:
+                    size_str = f"{size_bytes / 1024:.0f} KB"
+                else:
+                    size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+                bar.set_description(f"{table} ({size_str})")
                 try:
                     rows, cols = _import_jsonl_into_sqlite(conn, f, table)
                 except Exception as exc:
                     console.print(f"[yellow]![/] {type_name}: {exc}")
                     bar.advance()
                     continue
+                bar.set_description(f"{table} — {rows:,} rows")
                 stats.append({
                     "type": type_name, "table": table,
                     "rows": rows, "columns": cols,

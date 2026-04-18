@@ -450,17 +450,28 @@ class Workflows(Module):
         table.add_column("Status", justify="right")
         table.add_column("Label")
         table.add_column("Body snippet", overflow="fold", style="dim")
-        for pname in param_names:
-            for case, val in payloads:
-                body = {p: "bubblepwn-probe" for p in param_names}
-                body[pname] = val
-                res = await self._probe_once(api, name, body=body)
-                snippet = (
-                    json.dumps(res["body"])
-                    if not isinstance(res["body"], str)
-                    else res["body"]
-                )[:80]
-                table.add_row(pname, case, str(res["status"]), res["label"], snippet)
+
+        total_probes = len(param_names) * len(payloads)
+        from bubblepwn.ui import progress_iter
+        with progress_iter(
+            f"fuzzing {name} ({len(param_names)} params × {len(payloads)} cases)",
+            total_probes,
+        ) as bar:
+            for pname in param_names:
+                for case, val in payloads:
+                    bar.set_description(f"{pname} · {case}")
+                    body = {p: "bubblepwn-probe" for p in param_names}
+                    body[pname] = val
+                    res = await self._probe_once(api, name, body=body)
+                    snippet = (
+                        json.dumps(res["body"])
+                        if not isinstance(res["body"], str)
+                        else res["body"]
+                    )[:80]
+                    table.add_row(
+                        pname, case, str(res["status"]), res["label"], snippet
+                    )
+                    bar.advance()
         console.print(table)
 
     # ── compare ──────────────────────────────────────────────────────────

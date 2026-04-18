@@ -1,3 +1,17 @@
+"""Rich helpers — banner, tables, panels, progress trackers.
+
+Progress-feedback conventions (pick by expected duration of the operation):
+
+    < 2 s                   silent, or a single print after
+    2 – 10 s                console.status("verb…", spinner="dots")
+    10 s – 2 min, known N   progress_iter(desc, N) + set_description per item
+    10 s – 2 min, unknown N console.status(...) + status.update("N records…")
+    > 2 min                 as above + throughput / ETA in the live update
+
+Two live widgets (a progress_iter and a console.status) cannot run at the
+same time — Rich uses a single Live under the hood. When nesting, prefer a
+single level of feedback with dynamic ``set_description`` / ``update``.
+"""
 from __future__ import annotations
 
 from contextlib import contextmanager

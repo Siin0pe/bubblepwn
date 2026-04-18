@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlparse
 
 from bubblepwn.bubble import bundle as bundle_cache
@@ -81,23 +81,44 @@ async def snapshot_page(
     *,
     want_static: bool = True,
     want_dynamic: bool = True,
+    progress_cb: Optional[Callable[[str], None]] = None,
 ) -> PageSnapshot:
-    """Fetch page HTML + static.js + dynamic.js (with cache)."""
+    """Fetch page HTML + static.js + dynamic.js (with cache).
+
+    ``progress_cb`` is called with a short human-readable string before each
+    network stage (``HTML``, ``static.js``, ``dynamic.js``) and once per
+    stage with the payload size after it completes (e.g. ``static.js · 1.2 MB``).
+    Callers running a spinner can wire this to ``status.update(...)`` so the
+    user never sits in front of a frozen line while a 3 MB bundle downloads.
+    """
     if ctx.target is None:
         raise RuntimeError("no target set")
     cookies = ctx.session.cookies if ctx.session else None
     base = ctx.target.url
 
+    def _emit(msg: str) -> None:
+        if progress_cb is not None:
+            try:
+                progress_cb(msg)
+            except Exception:
+                pass  # feedback is best-effort, never fatal
+
+    _emit("HTML")
     html, status = await _fetch_page_html(base, page, cookies=cookies)
+    _emit(f"HTML · {_sizeof(len(html))}")
     urls = html_parse.extract_bundle_urls(html, f"{base}/")
     pname = html_parse.extract_current_page_name(html) or page or "index"
 
     static_text = ""
     dynamic_text = ""
     if want_static and "static_js" in urls:
+        _emit("static.js")
         static_text = await _fetch_text(urls["static_js"], cookies=cookies)
+        _emit(f"static.js · {_sizeof(len(static_text))}")
     if want_dynamic and "dynamic_js" in urls:
+        _emit("dynamic.js")
         dynamic_text = await _fetch_text(urls["dynamic_js"], cookies=cookies)
+        _emit(f"dynamic.js · {_sizeof(len(dynamic_text))}")
 
     return PageSnapshot(
         page_name=pname,
@@ -108,3 +129,11 @@ async def snapshot_page(
         static_text=static_text,
         dynamic_text=dynamic_text,
     )
+
+
+def _sizeof(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"

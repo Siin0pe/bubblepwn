@@ -290,10 +290,19 @@ class ApiProbe(Module):
     async def _invoke_no_auth_workflows(
         self, ctx: Context, api: BubbleAPI, branch: str, meta: ParsedMeta
     ) -> None:
+        candidates = meta.no_auth_workflows()[:25]
+        if not candidates:
+            return
         executed: list[tuple[str, int]] = []
-        for ep in meta.no_auth_workflows()[:25]:
-            status, _body = await api.workflow(ep.endpoint, body={})
-            executed.append((ep.endpoint, status))
+        from bubblepwn.ui import progress_iter
+        with progress_iter(
+            f"invoking no-auth workflows ({branch})", len(candidates)
+        ) as bar:
+            for ep in candidates:
+                bar.set_description(f"wf {ep.endpoint}")
+                status, _body = await api.workflow(ep.endpoint, body={})
+                executed.append((ep.endpoint, status))
+                bar.advance()
         ok = [e for e in executed if 200 <= e[1] < 300]
         if ok:
             ctx.add_finding(Finding(

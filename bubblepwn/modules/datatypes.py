@@ -140,8 +140,11 @@ class DataTypes(Module):
         export_type = flags.get("export_type")
 
         # 1. Snapshot current page
-        with console.status("[cyan]Fetching page + static.js[/]", spinner="dots"):
-            snap = await snapshot_page(ctx, want_dynamic=False)
+        with console.status("[cyan]Fetching page + static.js[/]", spinner="dots") as st:
+            snap = await snapshot_page(
+                ctx, want_dynamic=False,
+                progress_cb=lambda m: st.update(f"[cyan]index[/] — {m}"),
+            )
         if snap.static_text:
             _harvest_static(ctx, snap.static_text, source_tag="static_js")
 
@@ -149,18 +152,22 @@ class DataTypes(Module):
         if fetch_all:
             known_pages = [p for p in ctx.schema.pages if p != snap.page_name]
             if known_pages:
-                console.print(
-                    f"[cyan]→[/] fetch-all: refreshing {len(known_pages)} additional pages"
-                )
-                for pname in known_pages:
-                    try:
-                        sub = await snapshot_page(ctx, page=pname, want_dynamic=False)
-                        if sub.static_text:
-                            _harvest_static(
-                                ctx, sub.static_text, source_tag=f"static_js:{pname}"
-                            )
-                    except Exception as exc:
-                        console.print(f"  [yellow]![/] {pname}: {exc}")
+                from bubblepwn.ui import progress_iter
+                with progress_iter(
+                    "fetch-all (static.js per page)", len(known_pages)
+                ) as bar:
+                    for pname in known_pages:
+                        bar.set_description(f"page {pname}")
+                        try:
+                            sub = await snapshot_page(ctx, page=pname, want_dynamic=False)
+                            if sub.static_text:
+                                _harvest_static(
+                                    ctx, sub.static_text,
+                                    source_tag=f"static_js:{pname}",
+                                )
+                        except Exception as exc:
+                            console.print(f"  [yellow]![/] {pname}: {exc}")
+                        bar.advance()
 
         # 2. init/data
         cookies = ctx.session.cookies if ctx.session else None
