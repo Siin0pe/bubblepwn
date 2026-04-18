@@ -290,7 +290,7 @@ Mutating operations and / or bulk data extraction. Opt-in.
 
 ### `es-audit`
 
-**The core module.** Exploits the Bubble Elasticsearch crypto 0-day
+Exploits the Bubble Elasticsearch crypto bypass
 ([`docs/crypto.md`](./crypto.md)): `X-Bubble-Appname` is the only "secret",
 PBKDF2-MD5 × 7 and constant wrapper IVs `po9` / `fl1` are shared across
 every Bubble app. The module rewrites the primitives from scratch and

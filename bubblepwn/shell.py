@@ -23,8 +23,7 @@ from bubblepwn.ui import console, findings_table, module_help, modules_table, pa
 HISTORY_PATH = Path.home() / ".bubblepwn_history"
 
 _HELP_HEADER = (
-    "[bold cyan]bubblepwn[/] [dim]· Bubble.io pentest toolkit[/]\n"
-    "[dim]Core: crypto-bypass on /elasticsearch/* via PBKDF2-MD5×7 + constant IVs[/]"
+    "[bold cyan]bubblepwn[/] [dim]· Bubble.io pentest toolkit[/]"
 )
 
 _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
@@ -34,7 +33,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("target <url>", "step 1 — point at the target app (sets "
                               "ctx.target, resets the schema)"),
             ("flow crypto", "step 2 — fingerprint → datatypes → forge an "
-                             "ES probe (proves the 0-day works)"),
+                             "ES probe to confirm the target accepts it"),
             ("flow full --export out/audit.html --open",
              "step 3 — run every recon/audit/exploit module and open the "
              "rendered HTML report"),
@@ -117,7 +116,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 _HELP_PRESETS: list[tuple[str, str, str, str]] = [
     (
         "crypto", "red bold",
-        "demonstrate the Elasticsearch crypto 0-day",
+        "run the Elasticsearch crypto bypass end-to-end",
         "fingerprint → datatypes → es-audit probe → es-audit analyze --field-leak",
     ),
     (

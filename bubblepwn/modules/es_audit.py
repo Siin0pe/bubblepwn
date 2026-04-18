@@ -192,7 +192,7 @@ class EsAudit(Module):
     category = "exploit"
     subcommands = (
         ("probe", "forge one encrypted /elasticsearch/aggregate call and "
-                  "verify the crypto 0-day works against the target"),
+                  "verify the target accepts the envelope"),
         ("analyze", "`msearch` every known type once to detect which ones "
                     "are exposed + classify severity (critical PII vs "
                     "reference tables)"),
@@ -353,10 +353,7 @@ class EsAudit(Module):
             ctx.add_finding(Finding(
                 module=self.name,
                 severity="critical",
-                title=(
-                    "Bubble Elasticsearch crypto envelope accepted — "
-                    "0-day confirmed"
-                ),
+                title="Bubble Elasticsearch crypto envelope accepted",
                 detail=(
                     f"`/elasticsearch/aggregate` returned a valid count for "
                     f"type `{candidate}` using only the public "

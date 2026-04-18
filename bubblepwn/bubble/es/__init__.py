@@ -1,6 +1,7 @@
 """Bubble Elasticsearch — crypto primitives, payload builders, transport.
 
-Implements the public 0-day vulnerability disclosed in April 2025 (GBHackers):
+Implements the request envelope scheme disclosed publicly in April 2025
+(GBHackers):
   - Endpoint: ``/elasticsearch/{search,aggregate,maggregate,bulk_watch,...}``
   - Protocol: request body is ``{"x": b64, "y": b64, "z": b64}``
   - ``y`` carries the session timestamp, wrapped with a static IV seed ``po9``

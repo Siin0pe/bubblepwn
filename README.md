@@ -1,19 +1,20 @@
 # bubblepwn
 
-Offensive security toolkit for Bubble.io applications, built around a
-publicly disclosed cryptographic flaw in Bubble's internal Elasticsearch
-API. Knowing the public `X-Bubble-Appname` header of a Bubble app is enough
-to forge any request against `/elasticsearch/{search,aggregate,msearch,
-maggregate,mget,bulk_watch}` and read any data type without a correctly
-configured privacy rule.
+Offensive security toolkit for Bubble.io applications. Covers twelve
+modules across reconnaissance, configuration audit, and data extraction,
+including a cryptographic bypass on Bubble's internal Elasticsearch API:
+knowing the public `X-Bubble-Appname` header is enough to forge any
+request against `/elasticsearch/{search,aggregate,msearch,maggregate,
+mget,bulk_watch}` and read any data type without a correctly configured
+privacy rule.
 
 **Author:** [@Siin0pe](https://github.com/Siin0pe)
-**Based on:** Pablo's research on the Bubble.io Elasticsearch 0-day
+**Based on:** Pablo's research on the Bubble.io Elasticsearch crypto flaw
 ([`demon-i386/pop_n_bubble`](https://github.com/demon-i386/pop_n_bubble),
 GBHackers, April 2025) + independent research into the surrounding
 Bubble attack surface.
 
-## The core exploit
+## Elasticsearch crypto bypass
 
 Bubble's SPA encrypts every Elasticsearch request into a three-part envelope
 `{x, y, z}` before sending it. The scheme was reverse-engineered and
@@ -50,18 +51,17 @@ for the module reference.
 
 ## Everything else
 
-The eleven other modules exist to support the core exploit:
+Eleven more modules cover the rest of the Bubble attack surface:
 
 - `fingerprint` captures the `appname` and the session tokens.
 - `datatypes` enumerates every `custom.*` type discoverable in the
-  `static.js` bundle, feeding the exploit with targets.
+  `static.js` bundle.
 - `secrets`, `config-audit`, `plugin-audit`, `api-probe`, `files`,
   `workflows` cover adjacent attack surfaces (tokens in bundles,
   misconfigured workflows, open `/fileupload`, etc.).
 
-Every finding — from the crypto bypass and the supporting modules alike —
-lands in a single `Context` and can be exported as a structured report
-(Markdown / HTML / JSON).
+Every finding lands in a single `Context` and can be exported as a
+structured report (Markdown / HTML / JSON).
 
 ## Install
 
@@ -162,7 +162,7 @@ bubblepwn ❯ target https://app.example.com
 bubblepwn ❯ session load session.json              # optional
 bubblepwn ❯ modules                                 # list modules by phase
 bubblepwn ❯ help es-audit                           # show flags + examples
-bubblepwn ❯ flow crypto                             # the core demo
+bubblepwn ❯ flow crypto                             # ES crypto bypass end-to-end
 bubblepwn ❯ run es-audit dumpone custom.user        # paginate a type
 bubblepwn ❯ run es-audit query search '<json>'      # forge any ES request
 bubblepwn ❯ report out/report.html
@@ -182,7 +182,7 @@ bubblepwn ❯ report out/report.html
 | audit   | `plugin-audit` | Deprecated / leak-prone plugins and hosts |
 | audit   | `api-probe`    | Data API + Workflow API surface (meta, obj, wf, swagger) |
 | audit   | `files`        | S3/CDN enumeration and `/fileupload` probes |
-| **exploit** | **`es-audit`** | **Elasticsearch crypto 0-day: probe, count, dump, forge, encrypt/decrypt** |
+| exploit | `es-audit`     | Elasticsearch crypto bypass: probe, count, dump, forge, encrypt/decrypt |
 | exploit | `workflows`    | Workflow API audit (analyze, invoke, fuzz, compare) |
 
 ## Flow presets
