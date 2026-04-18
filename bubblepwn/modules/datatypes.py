@@ -27,18 +27,35 @@ from bubblepwn.ui import console, panel
 
 
 def _harvest_static(ctx: Context, static_text: str, source_tag: str) -> int:
-    """Pull custom types + fields from a static.js blob. Returns fields added."""
+    """Pull custom types and the global field pool from a static.js blob.
+
+    Bubble's ``<field>___<type>`` naming convention is scoped per data type
+    but the owning type is **not** encoded in the pattern itself — so the
+    regex matches all fields across all types without telling us who owns
+    which. Attributing every match to the ``user`` type (as earlier
+    versions did) was a bug: it lumped hundreds of unrelated fields on the
+    user record.
+
+    Accurate field → type ownership comes from:
+
+    - ``/api/1.1/init/data`` (always tried) — populates the current user
+      type with its real fields.
+    - ``/api/1.1/meta`` + ``/api/1.1/obj/<type>`` (``--probe``) — populates
+      every type whose record is readable anonymously.
+
+    This function now collects the raw field patterns into
+    ``ctx.settings["_field_pool"]`` purely for reporting (``N field patterns
+    discovered in bundle``) and does NOT attach them to any specific type.
+    Returns the number of new patterns added to the pool.
+    """
     for raw in static_js.parse_custom_types(static_text):
         ctx.schema.upsert_type(raw, source=source_tag)
 
-    added = 0
+    pool = ctx.settings.setdefault("_field_pool", set())
+    before = len(pool)
     for fname, ftype in static_js.parse_fields(static_text):
-        t = ctx.schema.upsert_type("user", source=source_tag)
-        raw = f"{fname}___{ftype}"
-        if fname not in t.fields:
-            t.add_field(BubbleField(name=fname, type=ftype, raw=raw, source=source_tag))
-            added += 1
-    return added
+        pool.add((fname, ftype))
+    return len(pool) - before
 
 
 def _harvest_init_data(ctx: Context, init_body: Any) -> int:
@@ -228,11 +245,28 @@ class DataTypes(Module):
             console.print("[yellow]No data types detected.[/]")
             return
 
-        panel(
-            "Data types",
-            f"{len(types)} types · {sum(len(t.fields) for t in types)} fields",
-            style="cyan",
-        )
+        total_fields = sum(len(t.fields) for t in types)
+        pool_size = len(ctx.settings.get("_field_pool") or ())
+        summary = f"{len(types)} types · {total_fields} fields mapped to a type"
+        if pool_size:
+            summary += (
+                f" · {pool_size} field patterns seen in static.js without a "
+                "known owner"
+            )
+        panel("Data types", summary, style="cyan")
+
+        types_without_fields = sum(1 for t in types if not t.fields)
+        if types_without_fields and types_without_fields == len(types) - (
+            1 if any(t.raw == "user" and t.fields for t in types) else 0
+        ):
+            console.print(
+                "[dim]Field counts are available only for types populated by "
+                "`/api/1.1/init/data` or by `--probe` (Data API). "
+                "Run `[cyan]run datatypes --probe[/]` to probe "
+                "`/api/1.1/meta` and `/api/1.1/obj/<type>` for accurate "
+                "per-type field lists.[/]"
+            )
+
         table = Table(header_style="bold cyan", border_style="dim")
         table.add_column("Type", style="cyan", no_wrap=True)
         table.add_column("NS", style="magenta")
@@ -245,10 +279,11 @@ class DataTypes(Module):
                 else "✗" if t.data_api_open is False
                 else "-"
             )
+            fields_cell = str(len(t.fields)) if t.fields else "[dim]?[/]"
             table.add_row(
                 t.name,
                 t.namespace,
-                str(len(t.fields)),
+                fields_cell,
                 api_mark,
                 ",".join(t.sources),
             )
