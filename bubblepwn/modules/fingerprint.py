@@ -447,9 +447,11 @@ class Fingerprint(Module):
         html = resp.text
         score, signals_hit = score_signals(html)
         verdict, color = verdict_from_score(score)
-        render_verdict(score, signals_hit, verdict, color)
 
+        # For non-Bubble targets there is no extracted info to render first,
+        # so show the detection panel immediately and bail.
         if score < 15:
+            render_verdict(score, signals_hit, verdict, color)
             ctx.add_finding(Finding(
                 module=self.name,
                 severity="info",
@@ -474,7 +476,10 @@ class Fingerprint(Module):
         })
         populate_schema(ctx, info)
 
+        # Extracted information first, then the detection verdict as a
+        # summary at the bottom — reads top-to-bottom like a report.
         render_info(info)
+        render_verdict(score, signals_hit, verdict, color)
         push_findings(ctx, info, self.name)
         console.print(f"[dim]response: {resp.status_code} · {resp.url}[/]")
 
