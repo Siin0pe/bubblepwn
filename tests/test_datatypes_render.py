@@ -63,9 +63,12 @@ def test_list_fields_is_a_summary_not_a_full_table():
     assert "custom (ref)" in out
     assert "option" in out
     assert "list" in out
-    # Exploration hints point at the right next command.
+    # Exploration hints point at the right next commands, incl. the
+    # single-table shortcut (v0.2.19).
     assert "--show-fields" in out
+    assert "--show-fields --type <name>" in out
     assert "--probe" in out
+    assert "--probe --type <name>" in out
     # The raw DB column names used to be in the table — they must not
     # appear in the summary view any more.
     assert "name___text" not in out

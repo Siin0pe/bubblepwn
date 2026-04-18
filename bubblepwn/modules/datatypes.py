@@ -367,11 +367,15 @@ class DataTypes(Module):
 
         console.print(
             "\n[dim]To explore further:[/]\n"
-            "  [cyan]run datatypes --show-fields[/]           "
+            "  [cyan]run datatypes --show-fields --type <name>[/]   "
+            "fields of one table (block with labels)\n"
+            "  [cyan]run datatypes --show-fields[/]                 "
             "one block per type with display labels\n"
-            "  [cyan]run datatypes --probe[/]                 "
-            "attach static.js fields to their owning type (Data API)\n"
-            "  [cyan]run datatypes --export-type <name>[/]    "
+            "  [cyan]run datatypes --probe --type <name>[/]         "
+            "attach static.js fields to that single type via /obj/\n"
+            "  [cyan]run datatypes --probe[/]                       "
+            "attach static.js fields to every type (full Data API sweep)\n"
+            "  [cyan]run datatypes --export-type <name>[/]          "
             "paginate /obj/<name> and dump all records onto the type"
         )
 
@@ -562,7 +566,8 @@ class DataTypes(Module):
                 else "✗" if t.data_api_open is False
                 else "-"
             )
-            fields_cell = str(len(t.fields)) if t.fields else "[dim]?[/]"
+            n = len(t.fields)
+            fields_cell = str(n) if n else "[dim]0[/]"
             table.add_row(
                 t.name,
                 t.namespace,
