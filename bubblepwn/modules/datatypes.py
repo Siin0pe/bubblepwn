@@ -107,9 +107,10 @@ class DataTypes(Module):
         "--probe",
         "--fetch-all",
         "--list-fields",
+        "--show-fields",
         "--export-type <name>",
     )
-    example = "run datatypes --probe --list-fields"
+    example = "run datatypes --probe --show-fields"
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:
         if ctx.target is None:
@@ -121,6 +122,7 @@ class DataTypes(Module):
         probe = bool(flags.get("probe", False))
         fetch_all = bool(flags.get("fetch_all", False))
         list_fields = bool(flags.get("list_fields", False))
+        show_fields = bool(flags.get("show_fields", False))
         export_type = flags.get("export_type")
 
         # 1. Snapshot current page
@@ -166,9 +168,76 @@ class DataTypes(Module):
             await self._export_type(ctx, api, str(export_type))
 
         self._render(ctx)
+        if show_fields:
+            self._render_fields_per_type(ctx)
         if list_fields:
             self._render_field_pool(ctx)
         self._push_findings(ctx)
+
+    def _render_fields_per_type(self, ctx: Context) -> None:
+        """Per-type detailed field view — merges probe results with
+        the static.js DefaultValues catalogue for human labels.
+
+        Each type with known fields (from ``init/data`` or ``--probe``) is
+        rendered as a section showing every field with:
+          - Field name (user-facing key stripped from the ``___<type>`` suffix)
+          - Bubble type (``text``, ``boolean``, ``custom.X``, ``list.X``,
+            ``option.X``, ...)
+          - Display label (from static.js if available)
+          - Source (``obj``, ``init_data``, ``meta``)
+
+        Fields not known per-type (i.e. the type was never probed) do not
+        appear here — use ``--list-fields`` for the flat global view.
+        """
+        from rich.table import Table
+
+        rich_pool: dict[str, dict[str, str]] = (
+            ctx.settings.get("_field_triples") or {}
+        )
+
+        types_with_fields = [
+            t for t in ctx.schema.types.values() if t.fields
+        ]
+        if not types_with_fields:
+            console.print(
+                "[yellow]No per-type fields known.[/] Run "
+                "[cyan]run datatypes --probe[/] first (Data API required). "
+                "Use [cyan]--list-fields[/] for the flat catalogue from "
+                "static.js."
+            )
+            return
+
+        total_fields = sum(len(t.fields) for t in types_with_fields)
+        panel(
+            "Fields per type",
+            f"{len(types_with_fields)} type(s) with known fields · "
+            f"{total_fields} field(s) total",
+            style="cyan",
+        )
+
+        for t in sorted(types_with_fields, key=lambda x: x.raw):
+            console.print(
+                f"\n[bold cyan]{t.raw}[/] [dim]· {t.namespace} · "
+                f"{len(t.fields)} field(s)[/]"
+            )
+            table = Table(header_style="bold", border_style="dim")
+            table.add_column("Field", style="cyan", no_wrap=True)
+            table.add_column("Bubble type", style="magenta", no_wrap=True)
+            table.add_column("Display label", overflow="fold")
+            table.add_column("Source", style="dim", no_wrap=True)
+            for fname in sorted(t.fields.keys()):
+                field = t.fields[fname]
+                # Look up the display label from the DefaultValues catalogue
+                # by the raw DB column name (that's the match key)
+                triple = rich_pool.get(field.raw)
+                if triple:
+                    display = triple.get("display") or "[dim]—[/]"
+                    canon_type = triple.get("value") or field.type
+                else:
+                    display = "[dim]—[/]"
+                    canon_type = field.type
+                table.add_row(fname, canon_type, display, field.source)
+            console.print(table)
 
     def _render_field_pool(self, ctx: Context) -> None:
         from rich.table import Table
