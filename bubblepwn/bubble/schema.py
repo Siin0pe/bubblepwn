@@ -10,7 +10,7 @@ class BubbleField(BaseModel):
     """A field on a Bubble data type."""
     name: str
     type: str          # text, number, boolean, date, image, file, option, list, geographic_address, user, custom.xxx
-    raw: str           # e.g. "csrd___boolean"
+    raw: str           # e.g. "name___text", "is_admin___boolean"
     source: str        # static_js | init_data | meta | es
 
 

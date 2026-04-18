@@ -900,7 +900,7 @@ class EsAudit(Module):
         console.print(
             "[dim]Open with `sqlite3 "
             f"{out_db}` or any SQLite GUI. Join example:\n"
-            "  SELECT u.* FROM t_user u JOIN t_custom_documents_rse d "
+            "  SELECT u.* FROM t_user u JOIN t_custom_<some_type> d "
             '  ON u._id = d."Created By__ref_id";[/]'
         )
 

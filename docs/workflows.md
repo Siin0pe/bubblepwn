@@ -66,13 +66,12 @@ After identifying an exposed type:
 ```
 bubblepwn ❯ run es-audit analyze
 […]
-custom.documents_rse            245       EXPOSED
+custom.order                    245       EXPOSED
 […]
-bubblepwn ❯ run es-audit dumpone custom.documents_rse
+bubblepwn ❯ run es-audit dumpone custom.order
 ```
 
-Writes `out/<host>/es/custom.documents_rse.jsonl` (one record per line,
-UTF-8).
+Writes `out/<host>/es/custom.order.jsonl` (one record per line, UTF-8).
 
 ## 5. Workflow API deep dive
 
