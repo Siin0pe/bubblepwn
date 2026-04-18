@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shlex
+import tempfile
 from pathlib import Path
-from typing import Any, Callable
-
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import NestedCompleter
@@ -21,6 +21,24 @@ from bubblepwn.report import write_report
 from bubblepwn.ui import console, findings_table, module_help, modules_table, panel
 
 HISTORY_PATH = Path.home() / ".bubblepwn_history"
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write text to *path* atomically (tempfile + os.replace).
+
+    Prevents half-written files if the process is killed mid-write. Works on
+    both POSIX and Windows — ``os.replace`` is atomic on NTFS since 3.3.
+    """
+    directory = path.parent
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(directory))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 _HELP_HEADER = (
     "[bold cyan]bubblepwn[/] [dim]· Bubble.io pentest toolkit[/]"
@@ -394,7 +412,7 @@ def _cmd_session(ctx: Context, args: list[str]) -> None:
             return
         p = Path(rest[0])
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(ctx.session.model_dump_json(indent=2), encoding="utf-8")
+        _atomic_write_text(p, ctx.session.model_dump_json(indent=2))
         console.print(f"[green]✓[/] session saved → [cyan]{p}[/]")
     else:
         console.print(f"[red]unknown subcommand:[/] {sub}")

@@ -27,7 +27,14 @@ def _local_file_for_url(url: str) -> Optional[Path]:
     if root is None:
         return None
     p = urlparse(url)
-    cand = root / p.path.lstrip("/")
+    root_resolved = root.resolve()
+    cand = (root / p.path.lstrip("/")).resolve()
+    try:
+        cand.relative_to(root_resolved)
+    except ValueError:
+        # Target URL path escaped the mirror root via `..` — refuse silently
+        # and fall through to the live HTTP fetch.
+        return None
     if cand.exists() and cand.is_file():
         return cand
     if cand.is_dir():

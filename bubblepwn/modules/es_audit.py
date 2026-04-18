@@ -42,6 +42,25 @@ def _normalize_type(raw: str) -> str:
     return f"custom.{raw}"
 
 
+_SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_path_segment(name: str) -> str:
+    """Sanitise a user-supplied string for use as a filename.
+
+    Only ``[A-Za-z0-9._-]`` survives; `..`, leading dots, empty results and
+    path separators (``/``, ``\\``, ``:``) are rejected. Raises ``ValueError``
+    on unsafe input so callers fail loudly instead of writing outside
+    ``out/``.
+    """
+    cleaned = _SAFE_SEGMENT_RE.sub("_", name)
+    if not cleaned or cleaned == "." or cleaned == ".." or cleaned.startswith("."):
+        raise ValueError(f"unsafe name: {name!r}")
+    if set(cleaned) == {"_"}:
+        raise ValueError(f"unsafe name: {name!r}")
+    return cleaned
+
+
 # ── Per-type severity classifier ────────────────────────────────────────
 #
 # Rules (strict narrowing, critical reserved for true PII / credentials):
@@ -789,7 +808,7 @@ class EsAudit(Module):
 
         out_dir = Path("out") / ctx.target.host / "es"
         out_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = raw_type.replace("/", "_").replace(":", "_")
+        safe_name = _safe_path_segment(raw_type)
         out_file = out_dir / f"{safe_name}.jsonl"
 
         total = 0

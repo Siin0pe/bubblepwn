@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import httpx
-
 from bubblepwn.bubble.parse import html as html_parse
 from bubblepwn.context import Context, Finding
 from bubblepwn.http import client
@@ -142,7 +140,7 @@ class ConfigAudit(Module):
         for version in ("live", "test"):
             url = f"https://bubble.io/page?name={page}&id={app_id}&version={version}"
             try:
-                async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as c:
+                async with client(follow_redirects=True, timeout=15.0) as c:
                     r = await c.get(url)
             except Exception as exc:
                 console.print(f"  [yellow]![/] {version}: {exc}")

@@ -59,6 +59,9 @@ jobs:
           print("crypto round-trip ok — triple:", list(triple.keys()))
           PY
 
+      - name: Unit tests (pytest)
+        run: pytest tests/ -q
+
   lint:
     name: lint (ruff)
     runs-on: ubuntu-latest

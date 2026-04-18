@@ -24,6 +24,8 @@ from typing import Optional
 
 import httpx
 
+from bubblepwn.http import client as http_client
+
 _ENDPOINTS: dict[str, str] = {
     "geocode":        "https://maps.googleapis.com/maps/api/geocode/json?address=NYC&key={k}",
     "places_text":    "https://maps.googleapis.com/maps/api/place/textsearch/json?query=pizza&key={k}",
@@ -97,11 +99,9 @@ def _classify_js(body_text: str) -> str:
     return "UNKNOWN(js)"
 
 
-async def _test_one(
-    client: httpx.AsyncClient, name: str, url: str
-) -> str:
+async def _test_one(c, name: str, url: str) -> str:
     try:
-        r = await client.get(url, timeout=15.0)
+        r = await c.get(url, timeout=15.0)
     except httpx.HTTPError as exc:
         return f"ERROR({exc.__class__.__name__})"
     # Static Maps / Street View binary responses — use status + content-type
@@ -119,9 +119,9 @@ async def verify_google_maps_key(
 ) -> KeyCheckResult:
     headers = {"Referer": referer} if referer else {}
     result = KeyCheckResult(key=key)
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+    async with http_client(headers=headers, follow_redirects=True) as c:
         tasks = {
-            name: asyncio.create_task(_test_one(client, name, tmpl.format(k=key)))
+            name: asyncio.create_task(_test_one(c, name, tmpl.format(k=key)))
             for name, tmpl in _ENDPOINTS.items()
         }
         for name, task in tasks.items():

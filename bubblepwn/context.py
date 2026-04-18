@@ -61,8 +61,11 @@ class Context:
     def set_target(self, raw: str) -> Target:
         new = Target.from_url(raw)
         if self.target is None or self.target.host != new.host:
-            # Reset cumulative schema when switching targets.
+            # Switching targets resets cumulative state: schema AND findings
+            # (findings carry no target field, so leaving them across hosts
+            # would mix verdicts between apps).
             self.schema = BubbleSchema()
+            self.findings = []
         self.target = new
         return self.target
 
@@ -72,3 +75,8 @@ class Context:
 
     def add_finding(self, f: Finding) -> None:
         self.findings.append(f)
+
+    @classmethod
+    def _reset(cls) -> None:
+        """Drop the singleton instance. Intended for tests only."""
+        cls._instance = None

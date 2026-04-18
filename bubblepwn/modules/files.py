@@ -23,8 +23,6 @@ import json
 import re
 from typing import Any, Optional
 
-import httpx
-
 from bubblepwn.bubble.workflow import snapshot_page
 from bubblepwn.context import Context, Finding
 from bubblepwn.http import client
@@ -198,7 +196,7 @@ class Files(Module):
         public_hits: list[dict[str, Any]] = []
         cdn_vs_s3: list[dict[str, Any]] = []
 
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as c:
+        async with client(timeout=15.0, follow_redirects=False) as c:
             with progress_iter("Checking file URLs", len(urls)) as bar:
                 for url in urls:
                     bar.set_description(f"HEAD {url[-48:]}")
