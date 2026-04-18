@@ -235,11 +235,41 @@ Ideas, bug reports, and new modules are very welcome.
 The project is intentionally small — ~15 files in `bubblepwn/`, no heavy
 framework. Reading three or four modules is enough to get the conventions.
 
-## Disclaimer
+## Disclaimer & authorized use
 
-Use against assets you own or are explicitly authorised to test. The
-cryptographic endpoint is public and unpatched, which does not grant the
-right to exfiltrate data from third parties.
+`bubblepwn` is an offensive security research tool. Running it implies
+acceptance of the terms below.
+
+- **Authorized testing only.** Use `bubblepwn` only against systems you
+  own or that you have prior written authorization to test (formal
+  engagement, bug-bounty program scope, CTF, training lab).
+- **Unauthorized use is prohibited and is the sole responsibility of
+  the end user.** The author accepts no liability for it and will not
+  assist investigations into it.
+- **Public disclosure.** The cryptographic bypass implemented in
+  `bubblepwn/bubble/es/` targets a Bubble.io flaw that was **publicly
+  disclosed in April 2025** by Lucca & Pedro
+  ([`demon-i386/pop_n_bubble`](https://github.com/demon-i386/pop_n_bubble),
+  GBHackers coverage). This project re-implements the primitives from
+  the public specification independently; no upstream code is used.
+- **No affiliation.** `bubblepwn` is not affiliated with, endorsed by,
+  or sponsored by Bubble Group, Inc. The name "Bubble.io" is used
+  descriptively only.
+- **No warranty.** Software provided "as is" per the MIT
+  [`LICENSE`](LICENSE).
+
+## Security & responsible disclosure
+
+- **Vulnerability in `bubblepwn` itself**: open a private advisory at
+  https://github.com/Siin0pe/bubblepwn/security/advisories/new.
+- **Vulnerability in a Bubble.io app you discover while using the
+  tool**: report it privately to the application owner with a
+  reasonable fix window (typically 90 days) before any public
+  disclosure. For platform-wide issues, contact Bubble.io Security
+  directly.
+
+`bubblepwn` does not itself discover new Bubble.io vulnerabilities —
+see the disclaimer above.
 
 ## Credits
 
