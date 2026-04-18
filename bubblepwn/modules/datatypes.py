@@ -1,17 +1,23 @@
 """Data types module — list custom Bubble types + their fields.
 
 Sources (in priority order):
-  1. `static.js`: all `custom.<name>` references + triple-underscore fields
-     (`<field>___<type>`) already compiled into the bundle.
-  2. `/api/1.1/init/data`: current user object → confirms field names/types on
-     the `user` type.
-  3. `/api/1.1/meta` (opt-in `--probe`): canonical Data API schema if the app
-     exposes it.
-  4. `/api/1.1/obj/<type>?limit=1` (opt-in `--probe`): confirms privacy rules
-     and pulls 1 sample record per type.
+  1. `static.js` DefaultValues block (`parse_default_values_by_type`):
+     keyed by owning type, gives us the full ``type → [fields]`` mapping
+     without hitting the Data API. Most accurate source and works even when
+     every privacy rule blocks the API.
+  2. `static.js` free-standing ``custom.<name>`` references: catches types
+     referenced by a page but with no local DefaultValues block (their
+     definition lives on another page's bundle — use ``--fetch-all``).
+  3. `/api/1.1/init/data` (automatic): confirms field names/types on the
+     current user type when a session is loaded.
+  4. `/api/1.1/meta` (opt-in ``--probe``): canonical Data API schema if the
+     app exposes it.
+  5. `/api/1.1/obj/<type>?limit=1` (opt-in ``--probe``): confirms privacy
+     rules per type and pulls a sample record.
 
-With `--fetch-all`, re-snapshots every page in the schema to accumulate types
-and fields from page-specific `static.js` bundles.
+With ``--fetch-all``, re-snapshots every page in the schema to accumulate
+types and fields from page-specific ``static.js`` bundles — essential on
+large apps where no single page knows every type.
 """
 from __future__ import annotations
 
@@ -40,26 +46,23 @@ def _normalize_type_name(raw: str) -> str:
 
 
 def _harvest_static(ctx: Context, static_text: str, source_tag: str) -> int:
-    """Pull custom types and the global field pool from a static.js blob.
+    """Pull custom types + per-type fields from a static.js blob.
 
-    Bubble's ``<field>___<type>`` naming convention is scoped per data type
-    but the owning type is **not** encoded in the pattern itself — so the
-    regex matches all fields across all types without telling us who owns
-    which. Attributing every match to the ``user`` type (as earlier
-    versions did) was a bug: it lumped hundreds of unrelated fields on the
-    user record.
+    Bubble ships a ``DefaultValues`` object in every page's ``static.js``
+    that is keyed **by owning type**: ``{type_name: [field_entries]}``.
+    Each entry carries the raw DB column name, the canonical Bubble type,
+    and the editor-facing display label — and the parent key tells us
+    which type the field belongs to. This function attaches those fields
+    directly to their owning ``BubbleType`` in ``ctx.schema``.
 
-    Accurate field → type ownership comes from:
+    Types are also registered from the free-standing ``custom.<name>``
+    references in the bundle (these catch dependencies that the current
+    page never writes to, so they have no DefaultValues block).
 
-    - ``/api/1.1/init/data`` (always tried) — populates the current user
-      type with its real fields.
-    - ``/api/1.1/meta`` + ``/api/1.1/obj/<type>`` (``--probe``) — populates
-      every type whose record is readable anonymously.
+    The flat ``_field_pool`` + ``_field_triples`` settings are still
+    populated for backward compatibility with ``--list-fields``.
 
-    This function now collects the raw field patterns into
-    ``ctx.settings["_field_pool"]`` purely for reporting (``N field patterns
-    discovered in bundle``) and does NOT attach them to any specific type.
-    Returns the number of new patterns added to the pool.
+    Returns the number of newly attached fields (excluding duplicates).
     """
     for raw in static_js.parse_custom_types(static_text):
         ctx.schema.upsert_type(raw, source=source_tag)
@@ -71,19 +74,54 @@ def _harvest_static(ctx: Context, static_text: str, source_tag: str) -> int:
 
     # 1) Light pool: (field_name, field_type) from the triple-underscore regex
     pool = ctx.settings.setdefault("_field_pool", set())
-    before = len(pool)
     for fname, ftype in static_js.parse_fields(static_text):
         pool.add((fname, ftype))
 
-    # 2) Rich pool: (name, value, display) triples from DefaultValues —
-    #    includes human labels + canonical Bubble type strings
-    #    (list.custom.X, option.X, etc.). Stored as a dict keyed by the
-    #    raw DB column so later snapshots can merge without dupes.
+    # 2) Rich pool: (name, value, display) triples — global catalogue used
+    #    by ``--list-fields``. Keyed by raw DB column so later snapshots
+    #    merge without dupes.
     rich = ctx.settings.setdefault("_field_triples", {})
     for triple in static_js.parse_field_triples(static_text):
         rich.setdefault(triple["name"], triple)
 
-    return len(pool) - before
+    # 3) Ownership-aware: attach fields to their owning type. This is the
+    #    big win — without this, the user has to run --probe (Data API)
+    #    to get per-type fields, which may be blocked by privacy rules.
+    attached = 0
+    by_type = static_js.parse_default_values_by_type(static_text)
+    for type_name, entries in by_type.items():
+        if type_name == "action":
+            # Global list, not an owning type
+            continue
+        raw = _raw_type_name(type_name)
+        t = ctx.schema.upsert_type(raw, source=source_tag)
+        for entry in entries:
+            db_col = entry["name"]
+            if db_col in t.fields:
+                continue
+            t.add_field(BubbleField(
+                name=db_col,
+                type=entry["value"],
+                raw=db_col,
+                source="static_js_dv",
+            ))
+            attached += 1
+
+    return attached
+
+
+def _raw_type_name(name: str) -> str:
+    """Normalise a DefaultValues key into a canonical schema type key.
+
+    Bubble uses raw slugs (``_am_atelier``, ``clients_base``) in the
+    DefaultValues object, but the rest of the schema keys types as
+    ``custom.<name>`` — except ``user`` which is a system type.
+    """
+    if name == "user":
+        return "user"
+    if name.startswith("custom.") or name.startswith("option."):
+        return name
+    return f"custom.{name}"
 
 
 def _harvest_init_data(ctx: Context, init_body: Any) -> int:
@@ -125,8 +163,9 @@ class DataTypes(Module):
                           "breakdown by Bubble type category. Cheap overview "
                           "with hints on how to drill down"),
         ("--show-fields", "one block per type: field name, Bubble type, "
-                          "display label, source — needs --probe or init/data "
-                          "to have attached fields to types"),
+                          "display label, source. Fields are attached from "
+                          "static.js DefaultValues (no --probe needed) and "
+                          "enriched by --probe / init/data if available"),
         ("--type <name>", "restrict --probe and --show-fields to a single "
                           "type. Accepts bare (`user`) or canonical "
                           "(`custom.user`) form"),
@@ -135,13 +174,12 @@ class DataTypes(Module):
     )
     example = "run datatypes --probe --show-fields --type user"
     long_help = (
-        "Sources, in priority order: (1) static.js — `custom.*` refs + the "
-        "DefaultValues catalogue (raw DB column, canonical Bubble type, "
-        "display label); (2) /api/1.1/init/data — field shape for the "
-        "current user type; (3) --probe → /api/1.1/meta + /obj/<type> "
-        "for privacy rules + a sample record per type. The triple-"
-        "underscore fields seen in static.js are NOT attached to a type "
-        "(Bubble doesn't encode ownership) — use --probe to attach them."
+        "Sources, in priority order: (1) static.js DefaultValues — keyed "
+        "by owning type, provides the full type → fields mapping for free "
+        "(no Data API call); (2) static.js `custom.*` references — adds "
+        "types referenced but not locally defined; (3) /api/1.1/init/data "
+        "— enriches the current user type; (4) --probe → /api/1.1/meta + "
+        "/obj/<type> for privacy-rule verdicts and sample records."
     )
 
     async def run(self, ctx: Context, **kwargs: Any) -> None:

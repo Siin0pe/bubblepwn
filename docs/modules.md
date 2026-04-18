@@ -101,6 +101,12 @@ Lists Bubble custom data types and their fields.
   `--type <name>`, `--export-type <name>`
 - **Example**: `run datatypes --probe --show-fields --type user`
 
+Primary source (v0.2.20+): the `static.js` **DefaultValues** block is
+keyed by owning type — `{<type_name>: [field_entries]}` — so every page's
+bundle ships the exact `type → fields` mapping for a slice of the app.
+No Data API call, no session, no `--probe` required to get per-type
+fields. A full `--fetch-all` walks every page's bundle and merges them.
+
 Sources, in priority order:
 
 1. `static.js` — `custom.<type_name>` references + the **DefaultValues**

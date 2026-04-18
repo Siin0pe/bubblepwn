@@ -6,6 +6,7 @@ hard-coded first-party plugins, and the watcher-cache describing the current pag
 """
 from __future__ import annotations
 
+import json
 import re
 
 BUBBLE_FIELD_TYPES = (
@@ -85,10 +86,8 @@ def parse_fields(content: str) -> list[tuple[str, str]]:
 def parse_field_triples(content: str) -> list[dict[str, str]]:
     """Extract (name, value, display) triples from ``DefaultValues``.
 
-    This is the richest field catalogue present in a Bubble ``static.js``
-    bundle. Every entry here is a field that Bubble may default at runtime
-    — covering every custom data type and the ``user`` type. Returns a
-    deduplicated list preserving first-seen order.
+    Flat fallback view — returns the full set of field triples regardless of
+    their owning type. Preferred for a global catalogue summary.
 
     ``name``    — the raw DB column name (e.g. ``email___text``,
                   ``client_cr_ateur_custom_clients_base``). This encodes
@@ -98,8 +97,7 @@ def parse_field_triples(content: str) -> list[dict[str, str]]:
                   ``option.<set>``, ``custom.<type>``, ``list.<anything>``).
     ``display`` — the editor-facing human label.
 
-    The owning data type is **not** encoded in these entries — the bundle
-    never exposes a ``type → fields`` mapping.
+    For the ownership-aware view, see :func:`parse_default_values_by_type`.
     """
     out: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -113,6 +111,108 @@ def parse_field_triples(content: str) -> list[dict[str, str]]:
             "value": m.group(2),
             "display": m.group(3),
         })
+    return out
+
+
+# Matches the RHS of ``... "function_name":"DefaultValues","args":[]}'] = <OBJ>``.
+_RE_DEFAULT_VALUES_ASSIGN = re.compile(
+    r'"DefaultValues"\s*,\s*"args"\s*:\s*\[\s*\]\s*\}\'\s*\]\s*=\s*(\{)',
+    re.DOTALL,
+)
+
+
+def _extract_balanced_json_object(content: str, start: int) -> str | None:
+    """Return the balanced JSON object starting at ``content[start] == '{'``.
+
+    Scans character-by-character respecting string literals + escapes so it
+    does not get fooled by braces inside quoted values. Returns ``None`` if
+    the file ends before the object closes.
+    """
+    if start >= len(content) or content[start] != "{":
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(content)):
+        ch = content[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start:i + 1]
+    return None
+
+
+def parse_default_values_by_type(content: str) -> dict[str, list[dict[str, str]]]:
+    """Ownership-aware view of the Bubble ``DefaultValues`` catalogue.
+
+    Bubble's bundle ships an object of the shape::
+
+        {
+          "action":          [{ name, value, display, deleted }, …],
+          "<type_name>":     [{ name, value, display, deleted }, …],
+          "_am_atelier":     [ … ],
+          "clients_base":    [ … ],
+          "user":            [ … ],
+          ...
+        }
+
+    Keys other than ``"action"`` are custom type names — so every list here
+    is the **exact field set of that owning type**. This is the only place
+    in ``static.js`` that encodes the ``type → fields`` mapping we care
+    about.
+
+    Returns ``{type_name: [field_entries]}`` with ``deleted`` entries
+    filtered out. Returns an empty dict on any parse failure (bundle
+    truncated, JSON malformed, DefaultValues block absent).
+    """
+    m = _RE_DEFAULT_VALUES_ASSIGN.search(content)
+    if not m:
+        return {}
+    raw = _extract_balanced_json_object(content, m.end() - 1)
+    if raw is None:
+        return {}
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+
+    out: dict[str, list[dict[str, str]]] = {}
+    for type_name, entries in obj.items():
+        if not isinstance(entries, list):
+            continue
+        kept: list[dict[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("deleted") is True:
+                continue
+            name = entry.get("name")
+            value = entry.get("value")
+            if not isinstance(name, str) or not isinstance(value, str):
+                continue
+            display = entry.get("display")
+            kept.append({
+                "name": name,
+                "value": value,
+                "display": display if isinstance(display, str) else "",
+            })
+        if kept:
+            out[type_name] = kept
     return out
 
 
