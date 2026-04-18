@@ -51,6 +51,11 @@ def _harvest_static(ctx: Context, static_text: str, source_tag: str) -> int:
     for raw in static_js.parse_custom_types(static_text):
         ctx.schema.upsert_type(raw, source=source_tag)
 
+    # The `user` type is native to every Bubble app — register it even if
+    # no `custom.user` reference shows up in the bundle, so it appears in
+    # the output regardless of whether the current user is logged in.
+    ctx.schema.upsert_type("user", source=source_tag)
+
     pool = ctx.settings.setdefault("_field_pool", set())
     before = len(pool)
     for fname, ftype in static_js.parse_fields(static_text):
@@ -186,6 +191,7 @@ class DataTypes(Module):
     async def _probe_obj(self, ctx: Context, api: BubbleAPI) -> None:
         tested = 0
         open_types: list[str] = []
+        fields_added = 0
         for raw, t in list(ctx.schema.types.items()):
             if t.data_api_open is True:
                 continue
@@ -200,9 +206,33 @@ class DataTypes(Module):
                     for rec in (resp.get("results") or [])[:1]:
                         if isinstance(rec, dict):
                             t.sample_records.append(rec)
+                            # Extract fields from the record's keys. Bubble
+                            # returns fields under their raw DB names like
+                            # ``<name>___<type>`` for typed custom fields,
+                            # plus system keys (``_id``, ``Created Date``,
+                            # ``Modified Date``, ``_type``, ``Created By``).
+                            for key in rec:
+                                if key in t.fields:
+                                    continue
+                                if "___" in key:
+                                    fname, _, ftype = key.rpartition("___")
+                                    if fname and ftype:
+                                        t.add_field(BubbleField(
+                                            name=fname, type=ftype,
+                                            raw=key, source="obj",
+                                        ))
+                                        fields_added += 1
+                                        continue
+                                # System / implicit fields — keep them so
+                                # the user sees the full shape of the record.
+                                t.add_field(BubbleField(
+                                    name=key, type="system",
+                                    raw=key, source="obj",
+                                ))
+                                fields_added += 1
         console.print(
             f"  [green]✓[/] obj probe → {tested} types tested, "
-            f"{len(open_types)} accessible"
+            f"{len(open_types)} accessible, +{fields_added} field(s) mapped"
         )
         if open_types:
             ctx.add_finding(Finding(
