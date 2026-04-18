@@ -12,6 +12,7 @@ from bubblepwn.context import Context, Session
 from bubblepwn.logging import setup_logging
 from bubblepwn.modules import registry
 from bubblepwn.ui import banner, console, modules_table
+from bubblepwn.update_check import print_update_banner_if_any
 
 app = typer.Typer(
     name="bubblepwn",
@@ -68,7 +69,9 @@ def _root(
     setup_logging(debug=verbose)
     if version:
         console.print(f"bubblepwn {__version__}")
+        print_update_banner_if_any()
         raise typer.Exit()
+    print_update_banner_if_any()
     if ctx.invoked_subcommand is None:
         banner()
         from bubblepwn.shell import run_shell

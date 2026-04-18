@@ -208,6 +208,7 @@ first if you want to persist it.
 |---|---|
 | `BUBBLEPWN_LOCAL_DUMP` | If set to a directory, `snapshot_page()` and bundle fetches first try to read from that directory before making an HTTP request. Lets you replay a scan offline against a cached mirror. |
 | `BUBBLEPWN_CACHE_DIR`  | Override the bundle cache location. Default: `~/.cache/bubblepwn/bundles`. |
+| `BUBBLEPWN_NO_UPDATE_CHECK` | Set to `1` to disable the passive PyPI update check run at startup. Otherwise, bubblepwn polls `pypi.org/pypi/bubblepwn/json` once every 24 h (cached in `~/.cache/bubblepwn/version_check.json`) and prints a one-line banner if a newer release exists. The check is also skipped automatically when `stdout` is not a TTY. |
 | `BUBBLEPWN_*`          | Any other `BUBBLEPWN_<KEY>` maps to a pydantic `Settings` field (see `bubblepwn/config.py`). |
 
 ## Exit codes
