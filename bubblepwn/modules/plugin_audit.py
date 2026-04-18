@@ -132,7 +132,7 @@ class PluginAudit(Module):
 
             if p.id in bad_list:
                 entry = bad_list[p.id]
-                flag = f"[red]KNOWN-BAD[/]"
+                flag = "[red]KNOWN-BAD[/]"
                 note = entry.get("note", "") or "(on deprecated list)"
                 flagged.append({
                     "id": p.id, "category": p.category,
@@ -146,7 +146,7 @@ class PluginAudit(Module):
                     age_days = (int(time.time() * 1000) - ts_ms) // 86400000
                     age = f"{age_days}d"
                     if ts_ms < cutoff_ms:
-                        flag = f"[yellow]OLD[/]"
+                        flag = "[yellow]OLD[/]"
                         note = f"created {age_days} days ago"
                         flagged.append({
                             "id": p.id, "category": p.category,

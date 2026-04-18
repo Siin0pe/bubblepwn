@@ -14,9 +14,7 @@ from typing import Any, Optional
 
 import httpx
 
-from bubblepwn.bubble.api import BubbleAPI
 from bubblepwn.bubble.parse import html as html_parse
-from bubblepwn.bubble.workflow import snapshot_page
 from bubblepwn.context import Context, Finding
 from bubblepwn.http import client
 from bubblepwn.modules.base import Module, parse_flags, register

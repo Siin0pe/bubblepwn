@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from bubblepwn.bubble import bundle as bundle_cache
 from bubblepwn.bubble import secrets as sec
 from bubblepwn.bubble.workflow import snapshot_page, _fetch_text
 from bubblepwn.context import Context, Finding

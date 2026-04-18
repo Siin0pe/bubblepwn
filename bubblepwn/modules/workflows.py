@@ -317,7 +317,7 @@ class Workflows(Module):
             console.print()
             panel(
                 "🚨 Password/token leaked in response body",
-                "\n".join(f"  [red]{n}[/]  →  {l}" for n, l in leaks[:10]),
+                "\n".join(f"  [red]{n}[/]  →  {leak}" for n, leak in leaks[:10]),
                 style="red",
             )
 

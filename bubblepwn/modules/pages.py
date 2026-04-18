@@ -18,7 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from bubblepwn.bubble.parse import html as html_parse
 from bubblepwn.bubble.workflow import snapshot_page
 from bubblepwn.context import Context, Finding
 from bubblepwn.modules.base import Module, parse_flags, register

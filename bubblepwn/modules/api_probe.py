@@ -86,7 +86,7 @@ class ApiProbe(Module):
         await self._probe_swagger(ctx, api, branch)
 
         if not meta or not meta.get_types:
-            console.print(f"  [dim]no types listed in meta — skipping obj probes[/]")
+            console.print("  [dim]no types listed in meta — skipping obj probes[/]")
             return
 
         await self._probe_obj_types(
@@ -143,7 +143,7 @@ class ApiProbe(Module):
     async def _probe_swagger(self, ctx: Context, api: BubbleAPI, branch: str) -> None:
         status, body = await api.meta_swagger()
         if status == 200 and isinstance(body, dict) and "swagger" in body:
-            console.print(f"  [green]✓[/] swagger.json → [red]exposed[/]")
+            console.print("  [green]✓[/] swagger.json → [red]exposed[/]")
             ctx.add_finding(Finding(
                 module=self.name,
                 severity="medium",

@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from bubblepwn.bubble.parse import dynamic_js, static_js
+from bubblepwn.bubble.parse import dynamic_js
 from bubblepwn.bubble.workflow import snapshot_page
 from bubblepwn.context import Context, Finding
 from bubblepwn.modules.base import Module, parse_flags, register
