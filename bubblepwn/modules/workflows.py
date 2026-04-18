@@ -207,7 +207,12 @@ class Workflows(Module):
                         and res["label"] in ("MISSING", "INVALID")
                         and res.get("hint")
                     ):
-                        row["params"] = await self._extract_params(api, name, res["hint"])
+                        row["params"] = await self._extract_params(
+                            api, name, res["hint"],
+                            update_cb=lambda m, n=name, b=branch: bar.set_description(
+                                f"{b} · {n[:40]} · {m}"
+                            ),
+                        )
                     rows.append(row)
                     bar.advance()
 
@@ -270,23 +275,39 @@ class Workflows(Module):
         }
 
     async def _extract_params(
-        self, api: BubbleAPI, name: str, seed_param: str, max_iter: int = 20
+        self,
+        api: BubbleAPI,
+        name: str,
+        seed_param: str,
+        max_iter: int = 20,
+        *,
+        update_cb: Optional[Any] = None,
     ) -> list[dict[str, str]]:
         """Iteratively POST with placeholder values to learn expected params.
 
         Bubble's 400 response names the first missing/invalid parameter. We
         fill it with a typed placeholder and re-post until we stop getting
         MISSING/INVALID labels.
+
+        ``update_cb`` receives a short string after each probe (``learning
+        params · N`` etc.) so the caller — typically an outer progress bar
+        or a console.status — can surface activity. Up to ``max_iter`` (20)
+        HTTP round-trips per workflow, which would otherwise sit silent.
         """
         body: dict[str, Any] = {}
         params: list[dict[str, str]] = []
         current = seed_param
-        for _ in range(max_iter):
+        for i in range(max_iter):
             if current is None:
                 break
             if current in body:
                 break
             body[current] = "bubblepwn-probe"
+            if update_cb is not None:
+                try:
+                    update_cb(f"learning params · {i + 1}")
+                except Exception:
+                    pass
             res = await api.workflow(name, method="POST", body=body)
             status, resp = res
             label, hint = _classify(status, resp)
@@ -425,8 +446,14 @@ class Workflows(Module):
         console.print(f"[cyan]fuzzing[/] /api/1.1/wf/{name}  [branch={branch}]")
 
         # Stage 1 — learn parameters
-        base = await self._probe_once(api, name, body={})
-        params = await self._extract_params(api, name, base.get("hint") or "")
+        with console.status(
+            f"[cyan]learning params of {name}[/]", spinner="dots"
+        ) as st:
+            base = await self._probe_once(api, name, body={})
+            params = await self._extract_params(
+                api, name, base.get("hint") or "",
+                update_cb=lambda m: st.update(f"[cyan]learning params of {name}[/] — {m}"),
+            )
         param_names = [p["name"] for p in params]
         console.print(f"  learned params: {param_names or '(none)'}")
 

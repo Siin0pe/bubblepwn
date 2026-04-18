@@ -223,7 +223,12 @@ class ApiProbe(Module):
                     open_types.append((tname, total))
 
                     if enumerate_types and total > 1:
-                        await self._enumerate_type(api, t, tname, total)
+                        await self._enumerate_type(
+                            api, t, tname, total,
+                            update_cb=lambda m, tn=tname: bar.set_description(
+                                f"/obj/ · {tn[:40]} · {m}"
+                            ),
+                        )
 
                 if check_idor and first_id:
                     s2, _ = await api.obj_by_id(tname, first_id)
@@ -259,12 +264,23 @@ class ApiProbe(Module):
         )
 
     async def _enumerate_type(
-        self, api: BubbleAPI, t: Any, tname: str, total: int
+        self,
+        api: BubbleAPI,
+        t: Any,
+        tname: str,
+        total: int,
+        *,
+        update_cb: Optional[Any] = None,
     ) -> None:
         # Cap at 1000 records to avoid runaway pulls
         cap = min(total, 1000)
         cursor = 0
         while cursor < cap:
+            if update_cb is not None:
+                try:
+                    update_cb(f"enumerate {cursor}/{cap}")
+                except Exception:
+                    pass
             status, body = await api.obj(tname, limit=100, cursor=cursor)
             if status != 200 or not isinstance(body, dict):
                 break

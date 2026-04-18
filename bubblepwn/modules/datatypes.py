@@ -427,44 +427,62 @@ class DataTypes(Module):
                     "without --type)."
                 )
                 return
-        for raw, t in items:
-            if t.data_api_open is True:
-                continue
-            type_path = raw.split(".", 1)[1] if raw.startswith("custom.") else raw
-            status, body = await api.obj(type_path, limit=1)
-            tested += 1
-            t.data_api_open = status == 200
-            if status == 200:
-                open_types.append(raw)
-                if isinstance(body, dict):
-                    resp = body.get("response") or {}
-                    for rec in (resp.get("results") or [])[:1]:
-                        if isinstance(rec, dict):
-                            t.sample_records.append(rec)
-                            # Extract fields from the record's keys. Bubble
-                            # returns fields under their raw DB names like
-                            # ``<name>___<type>`` for typed custom fields,
-                            # plus system keys (``_id``, ``Created Date``,
-                            # ``Modified Date``, ``_type``, ``Created By``).
-                            for key in rec:
-                                if key in t.fields:
-                                    continue
-                                if "___" in key:
-                                    fname, _, ftype = key.rpartition("___")
-                                    if fname and ftype:
-                                        t.add_field(BubbleField(
-                                            name=fname, type=ftype,
-                                            raw=key, source="obj",
-                                        ))
-                                        fields_added += 1
+        # Skip types already probed in a previous run so the feedback counter
+        # reflects actual work done.
+        to_probe = [(raw, t) for raw, t in items if t.data_api_open is not True]
+        if not to_probe:
+            console.print(
+                "  [dim]obj probe skipped (every type already confirmed)[/]"
+            )
+            return
+
+        console.print(
+            f"[cyan]→[/] probing /api/1.1/obj/ on {len(to_probe)} type(s)…"
+        )
+        from bubblepwn.ui import progress_iter
+        with progress_iter(
+            f"obj probe ({len(to_probe)} types)", len(to_probe)
+        ) as bar:
+            for raw, t in to_probe:
+                type_path = (
+                    raw.split(".", 1)[1] if raw.startswith("custom.") else raw
+                )
+                bar.set_description(f"/obj/{type_path}")
+                status, body = await api.obj(type_path, limit=1)
+                tested += 1
+                t.data_api_open = status == 200
+                if status == 200:
+                    open_types.append(raw)
+                    if isinstance(body, dict):
+                        resp = body.get("response") or {}
+                        for rec in (resp.get("results") or [])[:1]:
+                            if isinstance(rec, dict):
+                                t.sample_records.append(rec)
+                                # Extract fields from the record's keys. Bubble
+                                # returns fields under their raw DB names like
+                                # ``<name>___<type>`` for typed custom fields,
+                                # plus system keys (``_id``, ``Created Date``,
+                                # ``Modified Date``, ``_type``, ``Created By``).
+                                for key in rec:
+                                    if key in t.fields:
                                         continue
-                                # System / implicit fields — keep them so
-                                # the user sees the full shape of the record.
-                                t.add_field(BubbleField(
-                                    name=key, type="system",
-                                    raw=key, source="obj",
-                                ))
-                                fields_added += 1
+                                    if "___" in key:
+                                        fname, _, ftype = key.rpartition("___")
+                                        if fname and ftype:
+                                            t.add_field(BubbleField(
+                                                name=fname, type=ftype,
+                                                raw=key, source="obj",
+                                            ))
+                                            fields_added += 1
+                                            continue
+                                    # System / implicit fields — keep them so
+                                    # the user sees the full shape of the record.
+                                    t.add_field(BubbleField(
+                                        name=key, type="system",
+                                        raw=key, source="obj",
+                                    ))
+                                    fields_added += 1
+                bar.advance()
         console.print(
             f"  [green]✓[/] obj probe → {tested} types tested, "
             f"{len(open_types)} accessible, +{fields_added} field(s) mapped"

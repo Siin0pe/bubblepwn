@@ -140,8 +140,11 @@ class ConfigAudit(Module):
         for version in ("live", "test"):
             url = f"https://bubble.io/page?name={page}&id={app_id}&version={version}"
             try:
-                async with client(follow_redirects=True, timeout=15.0) as c:
-                    r = await c.get(url)
+                with console.status(
+                    f"[cyan]probing editor[/] ({version})…", spinner="dots"
+                ):
+                    async with client(follow_redirects=True, timeout=15.0) as c:
+                        r = await c.get(url)
             except Exception as exc:
                 console.print(f"  [yellow]![/] {version}: {exc}")
                 continue
