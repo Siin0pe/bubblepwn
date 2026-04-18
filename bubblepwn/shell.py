@@ -145,12 +145,12 @@ _HELP_PRESETS: list[tuple[str, str, str, str]] = [
     (
         "audit", "yellow",
         "active probing — GET/OPTIONS only, read-only",
-        "config-audit all → plugin-audit all → api-probe → files enumerate/test-public/upload-probe",
+        "fingerprint → plugins → config-audit all → plugin-audit all → api-probe → files enumerate/test-public/upload-probe",
     ),
     (
         "exploit", "red",
         "mutating operations — opt-in subcommands for data extraction",
-        "es-audit analyze → workflows analyze",
+        "fingerprint → datatypes → es-audit analyze → workflows analyze",
     ),
     (
         "full", "bold",
@@ -468,7 +468,12 @@ _FLOW_PRESETS: dict[str, list[tuple[str, list[str]]]] = {
         ("elements", []),
         ("secrets", []),
     ],
+    # `plugin-audit` needs the plugin list and third_party_script_hosts from
+    # fingerprint+plugins, and `config-audit` benefits from the app_id — so the
+    # audit preset must carry those prereqs itself when it runs standalone.
     "audit": [
+        ("fingerprint", []),
+        ("plugins", []),
         ("config-audit", ["all"]),
         ("plugin-audit", ["all"]),
         ("api-probe", []),
@@ -476,12 +481,37 @@ _FLOW_PRESETS: dict[str, list[tuple[str, list[str]]]] = {
         ("files", ["test-public"]),
         ("files", ["upload-probe"]),
     ],
+    # `es-audit analyze` without a prior fingerprint has no appname and no
+    # type list to iterate, so bundle fingerprint+datatypes as prereqs.
     "exploit": [
+        ("fingerprint", []),
+        ("datatypes", []),
         ("es-audit", ["analyze"]),
         ("workflows", ["analyze"]),
     ],
 }
-_FLOW_PRESETS["full"] = (
+
+
+def _dedupe_steps(
+    steps: list[tuple[str, list[str]]],
+) -> list[tuple[str, list[str]]]:
+    """Drop duplicate (module, args) pairs while preserving first-seen order.
+
+    `full = recon + audit + exploit` would otherwise re-run fingerprint three
+    times and datatypes twice now that audit/exploit carry their own prereqs.
+    """
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    out: list[tuple[str, list[str]]] = []
+    for mod, args in steps:
+        key = (mod, tuple(args))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((mod, args))
+    return out
+
+
+_FLOW_PRESETS["full"] = _dedupe_steps(
     _FLOW_PRESETS["recon"]
     + _FLOW_PRESETS["audit"]
     + _FLOW_PRESETS["exploit"]

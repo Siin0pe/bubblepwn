@@ -206,7 +206,7 @@ class EsAudit(Module):
     name = "es-audit"
     description = (
         "Bubble Elasticsearch crypto exploit (PBKDF2-MD5x7 + constant IVs "
-        "`po9`/`fl1`). Count, dump, forge, decrypt"
+        "`po9`/`fl1`). Probe, analyze, dump, forge, decrypt"
     )
     needs_auth = False
     category = "exploit"
@@ -505,7 +505,12 @@ class EsAudit(Module):
         try:
             parsed = json.loads(payload_raw)
         except json.JSONDecodeError as exc:
-            console.print(f"[red]invalid JSON payload:[/] {exc}")
+            console.print(
+                f"[red]invalid JSON payload:[/] {exc}\n"
+                "[dim]hint: the payload must be valid JSON. "
+                'Wrap strings in quotes (e.g. \'"hello"\') or pass an object '
+                '(e.g. \'{"k":"v"}\').[/]'
+            )
             return
         body_bytes = json.dumps(parsed, separators=(",", ":")).encode("utf-8")
         triple = wrap_triple(appname, body_bytes)
