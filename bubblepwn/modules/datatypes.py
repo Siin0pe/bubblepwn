@@ -108,10 +108,12 @@ class DataTypes(Module):
                     "per-type fields (confirms privacy rules too)"),
         ("--fetch-all", "re-snapshot every known page so DefaultValues from "
                         "other pages' static.js get merged"),
-        ("--list-fields", "show the full flat catalogue of fields seen in "
-                          "static.js DefaultValues (owner type unknown)"),
-        ("--show-fields", "show one table per type listing its mapped fields, "
-                          "with human labels from static.js when available"),
+        ("--list-fields", "summary of fields seen in static.js — count + "
+                          "breakdown by Bubble type category. Cheap overview "
+                          "with hints on how to drill down"),
+        ("--show-fields", "one block per type: field name, Bubble type, "
+                          "display label, source — needs --probe or init/data "
+                          "to have attached fields to types"),
         ("--export-type <name>", "paginate /api/1.1/obj/<name> and save every "
                                  "record onto the type's sample_records"),
     )
@@ -200,7 +202,8 @@ class DataTypes(Module):
         the static.js DefaultValues catalogue for human labels.
 
         Each type with known fields (from ``init/data`` or ``--probe``) is
-        rendered as a section showing every field with:
+        rendered as its own block (horizontal rule + table) showing every
+        field with:
           - Field name (user-facing key stripped from the ``___<type>`` suffix)
           - Bubble type (``text``, ``boolean``, ``custom.X``, ``list.X``,
             ``option.X``, ...)
@@ -208,8 +211,10 @@ class DataTypes(Module):
           - Source (``obj``, ``init_data``, ``meta``)
 
         Fields not known per-type (i.e. the type was never probed) do not
-        appear here — use ``--list-fields`` for the flat global view.
+        appear here — use ``--list-fields`` for the count summary and
+        exploration hints.
         """
+        from rich.rule import Rule
         from rich.table import Table
 
         rich_pool: dict[str, dict[str, str]] = (
@@ -223,7 +228,7 @@ class DataTypes(Module):
             console.print(
                 "[yellow]No per-type fields known.[/] Run "
                 "[cyan]run datatypes --probe[/] first (Data API required). "
-                "Use [cyan]--list-fields[/] for the flat catalogue from "
+                "Use [cyan]--list-fields[/] for the count summary from "
                 "static.js."
             )
             return
@@ -237,10 +242,13 @@ class DataTypes(Module):
         )
 
         for t in sorted(types_with_fields, key=lambda x: x.raw):
-            console.print(
-                f"\n[bold cyan]{t.raw}[/] [dim]· {t.namespace} · "
-                f"{len(t.fields)} field(s)[/]"
-            )
+            console.print()
+            console.print(Rule(
+                f"[bold cyan]{t.raw}[/] [dim]· {t.namespace} · "
+                f"{len(t.fields)} field(s)[/]",
+                style="cyan",
+                align="left",
+            ))
             table = Table(header_style="bold", border_style="dim")
             table.add_column("Field", style="cyan", no_wrap=True)
             table.add_column("Bubble type", style="magenta", no_wrap=True)
@@ -261,8 +269,20 @@ class DataTypes(Module):
             console.print(table)
 
     def _render_field_pool(self, ctx: Context) -> None:
-        from rich.table import Table
+        """Compact summary of the static.js DefaultValues catalogue.
 
+        Emits:
+          - a total count of fields seen in the bundle,
+          - a breakdown by Bubble type category (text / number / list.* /
+            option.* / custom.* refs / …),
+          - exploration hints (``--show-fields`` for per-type blocks,
+            ``--probe`` to attach fields to their owning type).
+
+        This is intentionally small — the full flat table proved overwhelming
+        on apps with hundreds of fields and duplicated what ``--show-fields``
+        already renders per-type. For the detailed per-type view, use
+        ``--show-fields``.
+        """
         rich_pool: dict[str, dict[str, str]] = (
             ctx.settings.get("_field_triples") or {}
         )
@@ -274,34 +294,50 @@ class DataTypes(Module):
             )
             return
 
-        # Sort by display label (fall back to name when display is empty)
-        entries = sorted(
-            rich_pool.values(),
-            key=lambda e: (e.get("display") or e.get("name") or "").lower(),
-        )
+        # Bucket entries by their Bubble type category.
+        buckets: dict[str, int] = {}
+        for e in rich_pool.values():
+            val = (e.get("value") or "").strip()
+            if not val:
+                cat = "other"
+            elif val.startswith("list."):
+                cat = "list"
+            elif val.startswith("option."):
+                cat = "option"
+            elif val.startswith("custom."):
+                cat = "custom (ref)"
+            else:
+                cat = val  # primitive: text, number, boolean, date, …
+            buckets[cat] = buckets.get(cat, 0) + 1
 
+        total = len(rich_pool)
         panel(
             "Fields discovered in static.js",
-            f"{len(entries)} field(s) in the DefaultValues catalogue · "
-            "owning type not encoded in the bundle",
+            f"{total} field(s) in the DefaultValues catalogue "
+            "[dim](owning type not encoded — use --show-fields for attached "
+            "fields)[/]",
             style="cyan",
         )
-        table = Table(header_style="bold cyan", border_style="dim")
-        table.add_column("Display label", overflow="fold")
-        table.add_column("Value (Bubble type)", style="magenta", no_wrap=True)
-        table.add_column("Raw DB column", style="dim", overflow="fold")
-        for e in entries:
-            table.add_row(
-                e.get("display") or "[dim]—[/]",
-                e.get("value") or "-",
-                e.get("name") or "-",
-            )
-        console.print(table)
+
+        # Breakdown table (by count desc, then name).
+        from rich.table import Table
+        breakdown = Table(
+            header_style="bold cyan", border_style="dim", show_edge=False,
+        )
+        breakdown.add_column("Category", style="magenta", no_wrap=True)
+        breakdown.add_column("Count", justify="right")
+        for cat, n in sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0])):
+            breakdown.add_row(cat, str(n))
+        console.print(breakdown)
+
         console.print(
-            "[dim]Ownership note: these fields are listed flat in "
-            "`DefaultValues` without their parent type. To attach a field "
-            "to a specific type, run `run datatypes --probe` (Data API) or "
-            "match the `value` column against known type refs.[/]"
+            "\n[dim]To explore further:[/]\n"
+            "  [cyan]run datatypes --show-fields[/]           "
+            "one block per type with display labels\n"
+            "  [cyan]run datatypes --probe[/]                 "
+            "attach static.js fields to their owning type (Data API)\n"
+            "  [cyan]run datatypes --export-type <name>[/]    "
+            "paginate /obj/<name> and dump all records onto the type"
         )
 
     async def _probe_meta(self, ctx: Context, api: BubbleAPI) -> None:
