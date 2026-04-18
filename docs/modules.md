@@ -54,8 +54,8 @@ additional Google API keys (medium), test-environment detection (medium).
 
 Enumerates every Bubble plugin referenced by the application.
 
-- **Flags**: `--page <name>`
-- **Example**: `run plugins`
+- **Flags**: `--page <name>`, `--enrich`
+- **Example**: `run plugins --enrich`
 
 Sources combined:
 
@@ -69,6 +69,29 @@ Sources combined:
 
 Classifies each plugin as `first_party`, `third_party`, `library`, or
 `unknown` and records the sources and translation locales.
+
+#### Enrichment
+
+Every detected plugin is decorated with the most useful metadata we can
+resolve:
+
+- **Offline** (always on):
+  - First-party slugs (`chartjs`, `stripe`, `select2`, …) are mapped to a
+    built-in catalogue → `display_name`, `vendor`, `docs_url`.
+  - Marketplace timestamp IDs (`<13-digit-ms>x<big-int>`) yield a
+    `created_at` date (first publication, parsed from the ID) and a
+    canonical `marketplace_url` (`https://bubble.io/plugin/<id>` — Bubble
+    redirects to the slugged version).
+
+- **Online** (`--enrich`, opt-in): one HTTPS request per third-party
+  plugin to `bubble.io/plugin/<id>`; the response's
+  `<meta property="og:*">` tags populate `display_name`, `description`,
+  `icon_url`, and the slugged `marketplace_url`. Failures (404, timeout)
+  are silently ignored — the plugin keeps whatever the offline pass gave it.
+
+The enriched fields flow through to `plugins` / `plugin-audit` findings
+and are rendered as a table in the Markdown / HTML reports, with the
+marketplace URL exposed as a clickable link.
 
 ### `datatypes`
 

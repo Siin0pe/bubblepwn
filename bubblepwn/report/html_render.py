@@ -194,6 +194,12 @@ def _esc(s: Any) -> str:
     return _html.escape(str(s)) if s is not None else "&mdash;"
 
 
+def _shorten(s: str, max_len: int = 64) -> str:
+    if not s or len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
 def _fmt(v: Any) -> str:
     if v is None or v == "":
         return "&mdash;"
@@ -315,6 +321,52 @@ def render_html(r: Report) -> str:
                 continue
             buf.append(f"<li>{_esc(k)}: {_fmt(v)}</li>")
         buf.append("</ul>")
+
+    # ── Plugins ──────────────────────────────────────────────────────
+    enriched = [
+        p for p in r.plugins
+        if p.get("display_name") or p.get("marketplace_url") or p.get("docs_url")
+    ]
+    if enriched:
+        order = {"third_party": 0, "first_party": 1, "unknown": 2}
+        enriched.sort(
+            key=lambda p: (order.get(p.get("category", ""), 9),
+                           p.get("display_name") or p.get("id") or "")
+        )
+        buf.append("<h3>Plugins</h3>")
+        buf.append(
+            "<table><thead><tr>"
+            "<th>Name</th><th>Vendor</th><th>Category</th>"
+            "<th>Created</th><th>Link</th>"
+            "</tr></thead><tbody>"
+        )
+        for p in enriched:
+            name = p.get("display_name") or p.get("id") or "—"
+            vendor = p.get("vendor") or "—"
+            cat = p.get("category", "—")
+            created = (p.get("created_at") or "")[:10] or "—"
+            link = p.get("marketplace_url") or p.get("docs_url") or ""
+            link_cell = (
+                f'<a href="{_esc(link)}" target="_blank" rel="noopener noreferrer">'
+                f'{_esc(_shorten(link))}</a>'
+                if link else "—"
+            )
+            desc = p.get("description")
+            name_cell = (
+                f'<strong>{_esc(name)}</strong>'
+                + (
+                    f'<div class="muted" style="font-size:0.85em">{_esc(desc)}</div>'
+                    if desc else ""
+                )
+            )
+            buf.append(
+                f"<tr><td>{name_cell}</td>"
+                f"<td>{_esc(vendor)}</td>"
+                f"<td>{_esc(cat)}</td>"
+                f"<td>{_esc(created)}</td>"
+                f"<td>{link_cell}</td></tr>"
+            )
+        buf.append("</tbody></table>")
 
     # ── Data exposure ────────────────────────────────────────────────
     exposed = [t for t in r.data_types if t.get("data_api_open") is True]

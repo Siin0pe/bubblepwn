@@ -1,6 +1,7 @@
 """Pydantic models describing what we know about a target Bubble app."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -64,6 +65,15 @@ class BubblePlugin(BaseModel):
     sources: list[str] = Field(default_factory=list)   # where detected: html | static_js | dynamic_js
     translations_loaded: list[str] = Field(default_factory=list)
     headers_source_range: Optional[tuple[int, int]] = None
+
+    # ── Enrichment (catalog + live marketplace lookup) ──────────────────
+    display_name: Optional[str] = None          # "Chart.js", "Stripe", vendor-provided title
+    vendor: Optional[str] = None                # author / company
+    marketplace_url: Optional[str] = None       # https://bubble.io/plugin/<slug>-<id>
+    docs_url: Optional[str] = None              # vendor docs / GitHub
+    description: Optional[str] = None           # one-line summary
+    icon_url: Optional[str] = None              # plugin logo (og:image)
+    created_at: Optional[datetime] = None       # derived from timestamp ID when applicable
 
 
 class BubbleSchema(BaseModel):

@@ -88,6 +88,13 @@ def build_report(ctx: Context, *, title: Optional[str] = None) -> Report:
             "category": p.category,
             "sources": list(p.sources),
             "translations_loaded": list(p.translations_loaded),
+            "display_name": p.display_name,
+            "vendor": p.vendor,
+            "marketplace_url": p.marketplace_url,
+            "docs_url": p.docs_url,
+            "description": p.description,
+            "icon_url": p.icon_url,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
         }
         for p in ctx.schema.plugins.values()
     ]

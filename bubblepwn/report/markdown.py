@@ -123,6 +123,35 @@ def render_markdown(r: Report) -> str:
             else:
                 out.append(f"- {k}: {_fmt(v)}")
 
+    # ── Plugins ──────────────────────────────────────────────────────
+    enriched = [
+        p for p in r.plugins
+        if p.get("display_name") or p.get("marketplace_url") or p.get("docs_url")
+    ]
+    if enriched:
+        # Sort: third_party first (what a reviewer wants to look at), then
+        # first_party, then unknown; name-secondary.
+        order = {"third_party": 0, "first_party": 1, "unknown": 2}
+        enriched.sort(
+            key=lambda p: (order.get(p.get("category", ""), 9),
+                           p.get("display_name") or p.get("id") or "")
+        )
+        out.append("")
+        out.append("### Plugins")
+        out.append("")
+        out.append("| Name | Vendor | Category | Created | Link |")
+        out.append("| --- | --- | --- | --- | --- |")
+        for p in enriched:
+            name = p.get("display_name") or p.get("id") or "—"
+            vendor = p.get("vendor") or "—"
+            cat = p.get("category", "—")
+            created = (p.get("created_at") or "")[:10] or "—"
+            link = p.get("marketplace_url") or p.get("docs_url") or ""
+            link_cell = f"[link]({link})" if link else "—"
+            out.append(
+                f"| {name} | {vendor} | {cat} | {created} | {link_cell} |"
+            )
+
     # ── Data exposure ────────────────────────────────────────────────
     exposed = [t for t in r.data_types if t.get("data_api_open") is True]
     if exposed:
