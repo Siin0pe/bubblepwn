@@ -130,7 +130,7 @@ is sent and the response inspected:
 Rebuilds the UI element hierarchy of each page without a browser.
 
 - **Flags**: `--fetch-all`, positional `<page-name>`
-- **Example**: `run elements index`
+- **Example**: `run elements --fetch-all`
 
 Strategy (purely HTTP-based, no Playwright):
 
@@ -254,7 +254,7 @@ Audits the Bubble Data API + Workflow API surface:
 
 - **Subcommands**: `enumerate`, `test-public`, `upload-probe`, `type-fuzz`
 - **Flags**: `--max <N>`, `--confirm`
-- **Example**: `run files enumerate && run files test-public`
+- **Example**: `run files enumerate`  (then `test-public`, `upload-probe`)
 
 `enumerate`: walks the current HTML, static/dynamic bundles, and every
 sample record stored in the schema to collect URLs matching Bubble's file
@@ -294,7 +294,7 @@ Exploits the Bubble Elasticsearch crypto bypass
 ([`docs/crypto.md`](./crypto.md)): `X-Bubble-Appname` is the only "secret",
 PBKDF2-MD5 × 7 and constant wrapper IVs `po9` / `fl1` are shared across
 every Bubble app. The module rewrites the primitives from scratch and
-exposes them as six subcommands covering the full spectrum from
+exposes them as eight subcommands covering the full spectrum from
 proof-of-exploit to bulk exfiltration.
 
 - **Subcommands**: `probe`, `analyze`, `dumpone <type>`, `dumpall`,
@@ -350,7 +350,9 @@ Flags:
   additional **high** finding.
 - `--batch` — use `/maggregate` to batch all counts in a single HTTP
   request. Falls back to sequential on length mismatch.
-- `--max-types <N>` — cap the number of types probed.
+- `--endpoint aggregate|search` — pick the ES endpoint used for
+  counting (default: `aggregate`; `search` falls back to `hits.total`).
+- `--appname <slug>` — override the appname read from the schema.
 
 #### `dumpone <type>`
 

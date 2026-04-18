@@ -153,7 +153,7 @@ def _run(
 )
 def _flow(
     ctx: typer.Context,
-    preset: str = typer.Argument(..., help="recon | audit | exploit | full"),
+    preset: str = typer.Argument(..., help="crypto | recon | audit | exploit | full"),
     target: str = typer.Argument(..., help="Target URL."),
     session_file: Optional[str] = typer.Option(None, "--session"),
     export: Optional[str] = typer.Option(
@@ -203,9 +203,14 @@ def _report(
         False, "--open", help="Open the generated report in the default browser."
     ),
 ) -> None:
-    """Run the full flow against a target and write a report in one command.
+    """Shorthand for `flow full --export <path>` — run every recon, audit,
+    and exploit module against the target and write a structured report.
+
+    Format is picked by the file extension (`.md` / `.html` / `.json`).
 
       [b]bubblepwn report https://app.cible.io out/audit.html --open[/b]
+
+      [b]bubblepwn report https://app.cible.io out/audit.json --session session.json[/b]
     """
     from bubblepwn.shell import _cmd_flow
 

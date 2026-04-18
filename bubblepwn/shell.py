@@ -173,7 +173,9 @@ def _render_help() -> None:
         console.print()
 
     console.print("[bold cyan]Flow presets[/]")
-    console.print("[dim]  usage: flow <preset> [--export <path>] [--checkpoint][/]\n")
+    console.print(
+        "[dim]  usage: flow <preset> [--export <path>] [--open] [--checkpoint][/]\n"
+    )
     preset_table = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
     preset_table.add_column(no_wrap=True)
     preset_table.add_column(overflow="fold")
@@ -194,7 +196,8 @@ def _render_flow_help() -> None:
     console.print()
     console.print("[bold cyan]flow presets[/]  [dim]— chain modules for a phase[/]")
     console.print(
-        "[dim]usage: flow <preset> [--export <path.md|.html|.json>] [--checkpoint][/]"
+        "[dim]usage: flow <preset> [--export <path.md|.html|.json>] "
+        "[--open] [--checkpoint][/]"
     )
     console.print()
     for name, color, tagline, _chain in _HELP_PRESETS:
@@ -470,7 +473,8 @@ _FLOW_PRESETS["full"] = (
 async def _cmd_flow(ctx: Context, args: list[str]) -> None:
     if not args:
         console.print(
-            "[red]usage:[/] flow <preset> [--export <path>] [--checkpoint]  "
+            "[red]usage:[/] flow <preset> [--export <path>] [--open] "
+            "[--checkpoint]  "
             "(preset: [red bold]crypto[/] | [green]recon[/] | "
             "[yellow]audit[/] | [red]exploit[/] | [bold]full[/])"
         )

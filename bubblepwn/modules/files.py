@@ -95,7 +95,7 @@ class Files(Module):
         ("--confirm", "authorize the mutating test-fuzz subcommand — "
                       "without it, type-fuzz refuses to run"),
     )
-    example = "run files enumerate && run files test-public"
+    example = "run files enumerate"
     long_help = (
         "Run `enumerate` first to populate the URL set — other "
         "subcommands reuse ctx.settings['_files_discovered']. "

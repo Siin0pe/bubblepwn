@@ -83,7 +83,7 @@ class Elements(Module):
         ("--fetch-all", "snapshot every known page and merge elements "
                         "across the whole app"),
     )
-    example = "run elements index"
+    example = "run elements --fetch-all"
     long_help = (
         "Pulls element names, types, and bindings from each page's "
         "static.js + dynamic.js. Element type is inferred from Bubble's "
