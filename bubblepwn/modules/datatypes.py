@@ -26,6 +26,19 @@ from bubblepwn.modules.base import Module, parse_flags, register
 from bubblepwn.ui import console, panel
 
 
+def _normalize_type_name(raw: str) -> str:
+    """Accept ``user`` / ``foo`` / ``custom.foo`` / ``option.bar`` uniformly.
+
+    Mirrors the convention used by ``es-audit --type``: the ``user`` type is
+    native, explicit namespaces (``custom.`` / ``option.``) stay as-is, and
+    anything else is assumed to be a ``custom.`` slug.
+    """
+    raw = raw.strip()
+    if raw == "user" or raw.startswith("custom.") or raw.startswith("option."):
+        return raw
+    return f"custom.{raw}"
+
+
 def _harvest_static(ctx: Context, static_text: str, source_tag: str) -> int:
     """Pull custom types and the global field pool from a static.js blob.
 
@@ -114,10 +127,13 @@ class DataTypes(Module):
         ("--show-fields", "one block per type: field name, Bubble type, "
                           "display label, source — needs --probe or init/data "
                           "to have attached fields to types"),
+        ("--type <name>", "restrict --probe and --show-fields to a single "
+                          "type. Accepts bare (`user`) or canonical "
+                          "(`custom.user`) form"),
         ("--export-type <name>", "paginate /api/1.1/obj/<name> and save every "
                                  "record onto the type's sample_records"),
     )
-    example = "run datatypes --probe --show-fields"
+    example = "run datatypes --probe --show-fields --type user"
     long_help = (
         "Sources, in priority order: (1) static.js — `custom.*` refs + the "
         "DefaultValues catalogue (raw DB column, canonical Bubble type, "
@@ -140,6 +156,12 @@ class DataTypes(Module):
         list_fields = bool(flags.get("list_fields", False))
         show_fields = bool(flags.get("show_fields", False))
         export_type = flags.get("export_type")
+        type_filter_raw = flags.get("type")
+        type_filter = (
+            _normalize_type_name(str(type_filter_raw))
+            if isinstance(type_filter_raw, str) and type_filter_raw.strip()
+            else None
+        )
 
         # 1. Snapshot current page
         with console.status("[cyan]Fetching page + static.js[/]", spinner="dots") as st:
@@ -184,7 +206,7 @@ class DataTypes(Module):
         # 3. Optional probes
         if probe:
             await self._probe_meta(ctx, api)
-            await self._probe_obj(ctx, api)
+            await self._probe_obj(ctx, api, only_type=type_filter)
 
         # 4. Optional export
         if export_type:
@@ -192,12 +214,14 @@ class DataTypes(Module):
 
         self._render(ctx)
         if show_fields:
-            self._render_fields_per_type(ctx)
+            self._render_fields_per_type(ctx, only_type=type_filter)
         if list_fields:
             self._render_field_pool(ctx)
         self._push_findings(ctx)
 
-    def _render_fields_per_type(self, ctx: Context) -> None:
+    def _render_fields_per_type(
+        self, ctx: Context, *, only_type: str | None = None
+    ) -> None:
         """Per-type detailed field view — merges probe results with
         the static.js DefaultValues catalogue for human labels.
 
@@ -224,6 +248,17 @@ class DataTypes(Module):
         types_with_fields = [
             t for t in ctx.schema.types.values() if t.fields
         ]
+        if only_type:
+            types_with_fields = [
+                t for t in types_with_fields if t.raw == only_type
+            ]
+            if not types_with_fields:
+                console.print(
+                    f"[yellow]No fields attached to[/] [cyan]{only_type}[/]. "
+                    "Is the type name correct? Run "
+                    f"[cyan]run datatypes --probe --type {only_type}[/] first."
+                )
+                return
         if not types_with_fields:
             console.print(
                 "[yellow]No per-type fields known.[/] Run "
@@ -376,11 +411,23 @@ class DataTypes(Module):
                 data={"endpoints": [e.endpoint for e in no_auth]},
             ))
 
-    async def _probe_obj(self, ctx: Context, api: BubbleAPI) -> None:
+    async def _probe_obj(
+        self, ctx: Context, api: BubbleAPI, *, only_type: str | None = None
+    ) -> None:
         tested = 0
         open_types: list[str] = []
         fields_added = 0
-        for raw, t in list(ctx.schema.types.items()):
+        items = list(ctx.schema.types.items())
+        if only_type:
+            items = [(raw, t) for raw, t in items if raw == only_type]
+            if not items:
+                console.print(
+                    f"  [yellow]![/] --type {only_type} not in the schema "
+                    "yet — fetch static.js first (run pages or datatypes "
+                    "without --type)."
+                )
+                return
+        for raw, t in items:
             if t.data_api_open is True:
                 continue
             type_path = raw.split(".", 1)[1] if raw.startswith("custom.") else raw

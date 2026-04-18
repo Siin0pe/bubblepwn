@@ -115,3 +115,45 @@ def test_show_fields_prompts_to_probe_when_no_fields_attached():
     )
     out = _capture(DataTypes()._render_fields_per_type, ctx)
     assert "--probe" in out
+
+
+def test_show_fields_only_type_renders_single_block():
+    """``--type user`` in combination with ``--show-fields`` must render
+    only the requested type's block and drop everything else."""
+    ctx = _make_ctx_with_pool()
+    user = BubbleType(name="user", raw="user", namespace="system")
+    user.add_field(BubbleField(name="name", type="text",
+                               raw="name___text", source="obj"))
+    ctx.schema.types["user"] = user
+    company = BubbleType(name="company", raw="custom.company", namespace="custom")
+    company.add_field(BubbleField(name="ceo", type="text",
+                                  raw="ceo___text", source="obj"))
+    ctx.schema.types["custom.company"] = company
+
+    out = _capture(
+        DataTypes()._render_fields_per_type, ctx, only_type="user",
+    )
+    assert "user" in out
+    # company block must NOT appear — the filter dropped it.
+    assert "custom.company" not in out
+    assert "ceo" not in out
+
+
+def test_show_fields_only_type_missing_falls_back_to_helpful_message():
+    ctx = _make_ctx_with_pool()
+    # No types attached to the schema for "custom.missing"
+    out = _capture(
+        DataTypes()._render_fields_per_type, ctx, only_type="custom.missing",
+    )
+    assert "No fields attached" in out
+    assert "--probe --type custom.missing" in out
+
+
+def test_normalize_type_name_accepts_shorthand_and_canonical_forms():
+    from bubblepwn.modules.datatypes import _normalize_type_name
+
+    assert _normalize_type_name("user") == "user"
+    assert _normalize_type_name("order") == "custom.order"
+    assert _normalize_type_name("custom.order") == "custom.order"
+    assert _normalize_type_name("option.status") == "option.status"
+    assert _normalize_type_name("  user  ") == "user"

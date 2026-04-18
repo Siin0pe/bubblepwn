@@ -98,8 +98,8 @@ marketplace URL exposed as a clickable link.
 Lists Bubble custom data types and their fields.
 
 - **Flags**: `--probe`, `--fetch-all`, `--list-fields`, `--show-fields`,
-  `--export-type <name>`
-- **Example**: `run datatypes --probe --show-fields`
+  `--type <name>`, `--export-type <name>`
+- **Example**: `run datatypes --probe --show-fields --type user`
 
 Sources, in priority order:
 
