@@ -13,6 +13,7 @@ class BubbleField(BaseModel):
     type: str          # text, number, boolean, date, image, file, option, list, geographic_address, user, custom.xxx
     raw: str           # e.g. "name___text", "is_admin___boolean"
     source: str        # static_js | init_data | meta | es
+    display: Optional[str] = None  # human name from /meta, e.g. "Profile Bio"
 
 
 class BubbleType(BaseModel):

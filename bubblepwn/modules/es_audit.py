@@ -29,8 +29,11 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from bubblepwn.bubble.api import BubbleAPI
 from bubblepwn.bubble.es import payload as pl
 from bubblepwn.bubble.es.transport import EsTransport
+from bubblepwn.bubble import name_normalize as nn
+from bubblepwn.bubble.parse.meta import MetaField, parse_meta
 from bubblepwn.context import Context, Finding
 from bubblepwn.modules.base import Module, parse_flags, register
 from bubblepwn.ui import console, panel, progress_iter
@@ -261,6 +264,12 @@ class EsAudit(Module):
                              "(default: fingerprint-detected)"),
         ("--sqlite", "dumpall: also build the SQLite DB at the end "
                      "(implies `sqlite` subcommand after the dump)"),
+        ("--enrich", "dumpone / dumpall / sqlite: after each ES hit, also "
+                     "fetch /api/1.1/obj/<type>/<_id> and merge the two "
+                     "records. The Data API applies a different privacy "
+                     "pipeline than ES — the union exposes more fields."),
+        ("--enrich-concurrency <N>", "dumpone / dumpall: parallel Data API "
+                                     "fetches during enrichment (default: 8)"),
     )
     example = "run es-audit analyze --type user --field-leak"
 
@@ -327,11 +336,11 @@ class EsAudit(Module):
                 return
             await self._dumpall(ctx, anon, auth, app_version, flags)
             if flags.get("sqlite"):
-                self._sqlite(ctx, positional, flags)
+                await self._sqlite(ctx, positional, flags, anon=anon, auth=auth)
         elif sub == "query":
             await self._query(ctx, anon, auth, positional, flags)
         elif sub == "sqlite":
-            self._sqlite(ctx, positional, flags)
+            await self._sqlite(ctx, positional, flags, anon=anon, auth=auth)
         else:
             console.print(
                 f"[red]unknown subcommand:[/] {sub}  "
@@ -853,18 +862,140 @@ class EsAudit(Module):
         console.print(
             f"[green]✓[/] {total} records · {raw_type} → [cyan]{out_file}[/]"
         )
+
+        # Optional: enrich with /api/1.1/obj/<type>/<_id>. Separate pass so
+        # an interrupted enrichment doesn't lose the raw ES dump.
+        enriched = 0
+        enriched_field_gains = 0
+        if flags.get("enrich") and total > 0:
+            cookies = ctx.session.cookies if (use_auth and ctx.session) else None
+            api = BubbleAPI(
+                ctx.target.url,
+                cookies=cookies,
+                branch=transport.branch,
+            )
+            concurrency = int(flags.get("enrich_concurrency") or 8)
+            meta_map = _build_meta_map_from_schema(ctx, raw_type)
+            # No /meta data? Run it now so we get Bubble's authoritative
+            # id↔display mapping before the per-record merge.
+            if not meta_map:
+                meta_map = await _fetch_meta_map(api, raw_type)
+            enriched, enriched_field_gains = await _enrich_jsonl_with_dataapi(
+                out_file, raw_type, api,
+                concurrency=concurrency, meta_map=meta_map,
+            )
+
         ctx.add_finding(Finding(
             module=self.name,
             severity="high" if total > 0 and not use_auth else "info",
             title=(
                 f"Dumped {total} records from {raw_type}"
                 + (" [anon]" if not use_auth else " [auth]")
+                + (f" · enriched {enriched}" if enriched else "")
             ),
             data={
                 "type": raw_type,
                 "count": total,
                 "file": str(out_file),
                 "auth": use_auth,
+                "enriched_records": enriched,
+                "enrich_field_gains": enriched_field_gains,
+            },
+        ))
+        if flags.get("enrich") and enriched:
+            console.print(
+                f"[green]✓[/] enriched {enriched}/{total} record(s) · "
+                f"+{enriched_field_gains} field(s) gained via Data API merge"
+            )
+
+        # Schema disparity: fields Bubble advertises in /meta but that
+        # never surface in the dump (even after enrichment) are almost
+        # always privacy-redacted — the field names themselves leak which
+        # attributes the app tracks, which is useful recon.
+        self._emit_schema_disparity_finding(ctx, raw_type, out_file)
+
+    def _emit_schema_disparity_finding(
+        self, ctx: Context, raw_type: str, out_file: Path,
+    ) -> None:
+        # Look up the type's /meta-declared fields. If datatypes --probe
+        # never ran, there's nothing to compare against — silently skip.
+        t = ctx.schema.types.get(raw_type)
+        if not t or not t.fields:
+            return
+        meta_fields = [
+            f for f in t.fields.values() if f.source == "meta" and f.raw
+        ]
+        if not meta_fields:
+            return
+
+        # Scan the dump (fast — at most a few MB per line of .keys()).
+        observed_keys: set[str] = set()
+        try:
+            with out_file.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    enrich = rec.get("_enrich")
+                    if isinstance(enrich, dict) and isinstance(
+                        enrich.get("merged"), dict
+                    ):
+                        observed_keys.update(enrich["merged"].keys())
+                    src = rec.get("_source")
+                    if isinstance(src, dict):
+                        observed_keys.update(src.keys())
+        except OSError:
+            return
+
+        hidden: list[tuple[str, str, str]] = []
+        for mf in meta_fields:
+            # A /meta field is 'seen' when any observed key matches
+            # either its DB id or its display name (via name_normalize).
+            if mf.raw in observed_keys:
+                continue
+            disp = mf.display or mf.name
+            if disp in observed_keys:
+                continue
+            if any(nn.match(mf.raw, obs) for obs in observed_keys):
+                continue
+            if disp and any(nn.match(disp, obs) for obs in observed_keys):
+                continue
+            hidden.append((mf.raw, disp or mf.name, mf.type))
+
+        if not hidden:
+            return
+
+        details = "\n".join(
+            f"  • {disp}  ({mf_id}, {mf_type})" for mf_id, disp, mf_type in hidden[:30]
+        )
+        more = f"\n  …and {len(hidden) - 30} more" if len(hidden) > 30 else ""
+        ctx.add_finding(Finding(
+            module=self.name,
+            severity="info",
+            title=(
+                f"{len(hidden)} field(s) in /meta but never returned by "
+                f"{raw_type} dump — privacy-redacted or unset"
+            ),
+            detail=(
+                "These fields are declared in the Bubble schema (/api/1.1/"
+                "meta) but were absent from every dumped record. Likely "
+                "either (a) fully blocked by privacy rules so no user "
+                "profile ever carries them, or (b) only populated on a "
+                "record subset we didn't hit. The field names themselves "
+                "leak internal schema — useful recon.\n" + details + more
+            ),
+            data={
+                "type": raw_type,
+                "hidden_fields": [
+                    {"id": mf_id, "display": disp, "type": mf_type}
+                    for mf_id, disp, mf_type in hidden
+                ],
             },
         ))
 
@@ -904,11 +1035,14 @@ class EsAudit(Module):
 
     # ── sqlite ───────────────────────────────────────────────────────────
 
-    def _sqlite(
+    async def _sqlite(
         self,
         ctx: Context,
         positional: list[str],
         flags: dict[str, Any],
+        *,
+        anon: Optional[EsTransport] = None,
+        auth: Optional[EsTransport] = None,
     ) -> None:
         """Rebuild a SQLite DB from the JSONL dumps in ``out/<host>/es/``.
 
@@ -918,6 +1052,12 @@ class EsAudit(Module):
         (``<creator>__LOOKUP__<target_id>``) get a companion
         ``<field>__ref_id`` column with the extracted target id so joins
         are direct.
+
+        When ``--enrich`` is passed, every JSONL dump that is not already
+        augmented with Data API records is enriched inline before the
+        tables are built. The merged view (ES + Data API) becomes the
+        table columns — both pipelines' fields, aligned across the
+        DB/display name conventions.
         """
         import sqlite3
         from pathlib import Path as _Path
@@ -947,6 +1087,31 @@ class EsAudit(Module):
             f"building [cyan]{out_db}[/]",
             style="cyan",
         )
+
+        # Opt-in enrichment pass — fill in the Data API merge for any
+        # JSONL that still lacks ``_enrich`` on its first record. This is
+        # what turns the SQLite into the full id↔display union.
+        if flags.get("enrich"):
+            use_auth = bool(flags.get("auth")) and auth is not None
+            branch = (auth or anon).branch if (auth or anon) else "live"
+            cookies = ctx.session.cookies if (use_auth and ctx.session) else None
+            api = BubbleAPI(ctx.target.url, cookies=cookies, branch=branch)
+            concurrency = int(flags.get("enrich_concurrency") or 8)
+            for jf in sorted(dump_dir.glob("*.jsonl")):
+                if _jsonl_already_enriched(jf):
+                    continue
+                raw_type = _reconstruct_raw_type(jf.stem)
+                console.print(
+                    f"[cyan]→[/] enriching {jf.name} → "
+                    f"/api/1.1/obj/{raw_type.split('.', 1)[-1]}"
+                )
+                meta_map = _build_meta_map_from_schema(ctx, raw_type)
+                if not meta_map:
+                    meta_map = await _fetch_meta_map(api, raw_type)
+                await _enrich_jsonl_with_dataapi(
+                    jf, raw_type, api,
+                    concurrency=concurrency, meta_map=meta_map,
+                )
 
         conn = sqlite3.connect(out_db)
         conn.execute("PRAGMA journal_mode = WAL")
@@ -1022,6 +1187,287 @@ class EsAudit(Module):
         ))
 
 
+# ── Data-API enrichment (module-level helpers) ──────────────────────────
+
+
+def _build_meta_map_from_schema(
+    ctx: Context, raw_type: str,
+) -> dict[str, str]:
+    """Collect the id→display mapping Bubble published in /meta for this
+    type. Returns an empty dict if datatypes --probe hasn't run or the
+    type isn't known.
+    """
+    t = ctx.schema.types.get(raw_type)
+    if not t:
+        return {}
+    out: dict[str, str] = {}
+    for f in t.fields.values():
+        if f.source == "meta" and f.raw and f.display:
+            out[f.raw] = f.display
+    return out
+
+
+async def _fetch_meta_map(
+    api: BubbleAPI, raw_type: str,
+) -> dict[str, str]:
+    """On-demand /meta fetch for enrichment — resolves Bubble-managed
+    aliases (e.g. ``name_first_text`` → ``Profile First Name``) that the
+    heuristic matcher cannot discover.
+    """
+    try:
+        status, body = await api.meta()
+    except Exception:
+        return {}
+    if status != 200 or body is None:
+        return {}
+    parsed = parse_meta(body)
+    # Accept both 'user' and 'custom.foo' — parse_meta keys by bare name.
+    bare = raw_type.split(".", 1)[1] if "." in raw_type else raw_type
+    return parsed.id_to_display(bare)
+
+
+
+
+async def _enrich_jsonl_with_dataapi(
+    jsonl_path: Path, raw_type: str, api: BubbleAPI, *, concurrency: int = 8,
+    meta_map: Optional[dict[str, str]] = None,
+) -> tuple[int, int]:
+    """Re-read a JSONL dump, fetch ``/api/1.1/obj/<type>/<_id>`` per record,
+    and rewrite the file with each record augmented by an ``_enrich`` block.
+
+    Returns ``(records_enriched, total_new_fields)``. Records whose Data API
+    call fails (404, 401, network error, non-dict body) are kept intact with
+    ``_enrich.dataapi_status`` set to the observed status so a second pass
+    can target them selectively.
+
+    A record is considered already-enriched if it has a top-level ``_enrich``
+    key — those are skipped so repeated runs are idempotent.
+
+    ``meta_map`` is the authoritative id↔display lookup for this type
+    (from ``/api/1.1/meta``). Pass it in to resolve Bubble-managed aliases
+    that the heuristic matcher can't reach (e.g. ``name_first_text`` →
+    ``Profile First Name``).
+    """
+    import asyncio
+
+    # Path of the type in the Data API URL: drop the ``custom.`` prefix.
+    type_path = raw_type.split(".", 1)[1] if raw_type.startswith("custom.") else raw_type
+
+    # Load the full dump into memory. Dumps are typically < 500 MB for even
+    # very large apps since ES strips most fields; keep the memory simple.
+    records: list[dict[str, Any]] = []
+    with jsonl_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    to_enrich: list[tuple[int, str]] = []
+    for idx, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            continue
+        if "_enrich" in rec:
+            continue  # already done — idempotent
+        uid = rec.get("_id")
+        if isinstance(uid, str) and uid:
+            to_enrich.append((idx, uid))
+
+    if not to_enrich:
+        return 0, 0
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+    gains_total = 0
+    enriched_count = 0
+
+    async def one(idx: int, uid: str) -> None:
+        nonlocal gains_total, enriched_count
+        async with sem:
+            try:
+                status, body = await api.obj_by_id(type_path, uid)
+            except Exception as exc:
+                records[idx]["_enrich"] = {
+                    "dataapi_status": 0, "error": str(exc)[:120],
+                    "merged": dict(records[idx].get("_source") or {}),
+                    "provenance": {},
+                }
+                return
+        rec = records[idx]
+        es_source = dict(rec.get("_source") or {})
+        da_source: dict[str, Any] = {}
+        if status == 200 and isinstance(body, dict):
+            # Data API wraps the record in {"response": {...}} for GET by id.
+            da_source = body.get("response") if isinstance(body.get("response"), dict) else body
+            if not isinstance(da_source, dict):
+                da_source = {}
+        merged, provenance, new_fields = _merge_es_dataapi(
+            es_source, da_source, meta_map=meta_map,
+        )
+        rec["_enrich"] = {
+            "dataapi_status": status,
+            "dataapi_source": da_source,
+            "merged": merged,
+            "provenance": provenance,
+        }
+        if status == 200 and isinstance(body, dict):
+            enriched_count += 1
+            gains_total += new_fields
+
+    from bubblepwn.ui import progress_iter
+    with progress_iter(
+        f"enrich {type_path} via /api/1.1/obj", len(to_enrich)
+    ) as bar:
+        tasks = [asyncio.create_task(one(i, u)) for i, u in to_enrich]
+        # Advance progress as tasks complete. Use asyncio.as_completed so a
+        # stuck request doesn't block the bar.
+        for coro in asyncio.as_completed(tasks):
+            try:
+                await coro
+            except Exception as exc:
+                console.print(f"[yellow]enrichment task failed:[/] {exc}")
+            bar.advance()
+
+    # Rewrite JSONL atomically.
+    tmp = jsonl_path.with_suffix(jsonl_path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    import os as _os
+    _os.replace(tmp, jsonl_path)
+    return enriched_count, gains_total
+
+
+def _merge_es_dataapi(
+    es_source: dict[str, Any],
+    da_source: dict[str, Any],
+    *,
+    meta_map: Optional[dict[str, str]] = None,
+) -> tuple[dict[str, Any], dict[str, str], int]:
+    """Merge ES ``_source`` with Data API record, matching keys across the
+    ES (DB) and display name conventions.
+
+    Returns ``(merged, provenance, new_fields_gained)`` where ``provenance``
+    maps each final key to ``"es"``, ``"dataapi"`` or ``"both"``. Keys that
+    exist under both names end up under the **display** name in ``merged``
+    (since it's the official Bubble schema name), with an ``<display>@db``
+    alias copying the raw ES key for traceability.
+
+    ``meta_map`` is the authoritative id→display mapping published by
+    ``/api/1.1/meta``. When provided, it takes priority over the heuristic
+    matcher for every field it covers — Bubble-managed aliases like
+    ``name_first_text ↔ Profile First Name`` that share no string
+    structure are only matched via this table.
+    """
+    used_es: set[str] = set()
+    used_da: set[str] = set()
+    pairs: list[tuple[str, str]] = []
+
+    # 1) Authoritative pairs from /meta.
+    if meta_map:
+        for es_key, disp_key in meta_map.items():
+            if es_key in es_source and disp_key in da_source:
+                pairs.append((es_key, disp_key))
+                used_es.add(es_key)
+                used_da.add(disp_key)
+
+    # 2) Heuristic matcher on whatever's left.
+    remaining_es = [k for k in es_source if k not in used_es]
+    remaining_da = [k for k in da_source if k not in used_da]
+    heur_pairs, heur_es_only, heur_da_only = nn.pair(
+        db_names=remaining_es,
+        display_names=remaining_da,
+    )
+    pairs.extend(heur_pairs)
+
+    merged: dict[str, Any] = {}
+    provenance: dict[str, str] = {}
+
+    for db_key, disp_key in pairs:
+        es_val = es_source.get(db_key)
+        da_val = da_source.get(disp_key)
+        # Prefer the Data API value when ES returned a redacted empty
+        # container ({} or []). Otherwise prefer ES for richness.
+        if _is_redacted(es_val) and not _is_redacted(da_val):
+            merged[disp_key] = da_val
+        elif _is_redacted(da_val) and not _is_redacted(es_val):
+            merged[disp_key] = es_val
+        else:
+            # Both are non-empty (or both empty): prefer Data API since
+            # it uses the display-name convention; ES value kept as alias.
+            merged[disp_key] = da_val if da_val is not None else es_val
+        if db_key != disp_key:
+            merged[f"{disp_key}@db"] = es_val
+        provenance[disp_key] = "both"
+
+    for k in heur_es_only:
+        merged[k] = es_source[k]
+        provenance[k] = "es"
+
+    new_fields = 0
+    for k in heur_da_only:
+        merged[k] = da_source[k]
+        provenance[k] = "dataapi"
+        new_fields += 1
+
+    return merged, provenance, new_fields
+
+
+def _is_redacted(v: Any) -> bool:
+    """True for values Bubble returns when a privacy rule strips content.
+
+    ``{}`` empty dict is the standard redaction marker for sub-objects
+    (e.g. ``authentication``). Empty lists and ``None`` also qualify.
+    """
+    if v is None:
+        return True
+    if isinstance(v, dict) and not v:
+        return True
+    if isinstance(v, list) and not v:
+        return True
+    return False
+
+
+def _jsonl_already_enriched(path: Path) -> bool:
+    """Cheap check: does the first non-empty JSONL line already carry an
+    ``_enrich`` key? Avoids a full scan per file.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    return False
+                return isinstance(rec, dict) and "_enrich" in rec
+    except OSError:
+        return False
+    return False
+
+
+def _reconstruct_raw_type(stem: str) -> str:
+    """Inverse of ``_safe_path_segment(_normalize_type(...))``.
+
+    Dump filenames keep dots intact (``custom.user.jsonl``), but we fall
+    back to the older underscore form (``custom_user.jsonl``) just in
+    case an old dump is around.
+    """
+    if stem == "user":
+        return "user"
+    if stem.startswith("custom.") or stem.startswith("option."):
+        return stem
+    if stem.startswith("custom_"):
+        return "custom." + stem[len("custom_"):]
+    if stem.startswith("option_"):
+        return "option." + stem[len("option_"):]
+    return stem
+
+
 # ── SQLite helpers (module-level, no `self`) ─────────────────────────────
 
 _SQL_KEYWORDS = {
@@ -1085,9 +1531,17 @@ def _split_lookup(value: Any) -> Optional[str]:
 def _import_jsonl_into_sqlite(
     conn: Any, jsonl_path: Any, table: str
 ) -> tuple[int, int]:
-    """Return ``(rows_inserted, total_columns)``."""
-    # Read every record first to finalise the schema (some columns only
-    # appear in later records).
+    """Return ``(rows_inserted, total_columns)``.
+
+    Record selection priority per JSONL line:
+      1. ``_enrich.merged`` — the ES + Data API union (enriched dumps).
+      2. ``_source`` — raw ES record (regular dumps).
+      3. the top-level dict itself (legacy flat records).
+
+    The row always carries ``_id`` and ``_type`` from the envelope when
+    available so joins across tables keep working regardless of whether
+    the source was enriched.
+    """
     records: list[dict[str, Any]] = []
     with jsonl_path.open(encoding="utf-8") as fh:
         for line in fh:
@@ -1098,11 +1552,25 @@ def _import_jsonl_into_sqlite(
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            # A dump entry may be a full hit envelope ({_source: {...}, _id,...})
-            # or already a flat record.
-            source = rec.get("_source") if isinstance(rec, dict) and "_source" in rec else rec
-            if isinstance(source, dict):
-                records.append(source)
+            if not isinstance(rec, dict):
+                continue
+            # Prefer the enriched merged view — it unions ES + Data API
+            # fields under their display names.
+            enrich = rec.get("_enrich")
+            if isinstance(enrich, dict) and isinstance(enrich.get("merged"), dict):
+                source = dict(enrich["merged"])
+            elif "_source" in rec and isinstance(rec["_source"], dict):
+                source = dict(rec["_source"])
+            else:
+                source = dict(rec)
+            # Make sure the envelope identifiers land in the table so joins
+            # can target ``_id`` even on enriched records (where merged may
+            # omit ``_id`` under the Data API convention).
+            if "_id" not in source and isinstance(rec.get("_id"), str):
+                source["_id"] = rec["_id"]
+            if "_type" not in source and isinstance(rec.get("_type"), str):
+                source["_type"] = rec["_type"]
+            records.append(source)
     if not records:
         return 0, 0
 

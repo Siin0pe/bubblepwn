@@ -390,7 +390,35 @@ and writes `out/<host>/es/<type>.jsonl`, one record per line. Emits a
 **high** finding when run anonymously.
 
 Flags: `--batch-size <N>` (default 1000), `--max <N>` (cap records),
-`--auth` (use loaded session cookies).
+`--auth` (use loaded session cookies), `--enrich` (merge Data API per
+record — see below).
+
+After the dump completes, if the type has a `/meta`-declared schema in
+`ctx.schema`, an `info` finding lists fields Bubble advertises but that
+never surfaced in the dump — privacy-redacted or unset.
+
+##### Data API enrichment (`--enrich`)
+
+Bubble's ES and Data API apply **different privacy pipelines**. A field
+hidden by ES rules can still be exposed by `/api/1.1/obj/<type>/<_id>`
+(and vice-versa). With `--enrich`, every ES hit gets re-fetched via the
+Data API and the two records are merged under their display names.
+
+Merge rules:
+
+- Field names are paired across the DB↔display conventions using the
+  `/api/1.1/meta` mapping when available (authoritative) and a
+  heuristic fallback (`bubblepwn.bubble.name_normalize`) otherwise.
+- Redacted values (`{}`, `[]`, `null`) yield to the other pipeline's
+  non-empty value.
+- Each merged JSONL record keeps the original `_source` intact and adds
+  an `_enrich` block with `dataapi_status`, `dataapi_source`, `merged`,
+  and `provenance` (per-key `es | dataapi | both`).
+- Idempotent: re-running enrichment on an already-enriched JSONL is a
+  no-op. Failed records keep their HTTP status so you can retry.
+
+Tuning: `--enrich-concurrency <N>` (default 8) parallelises the Data
+API calls.
 
 #### `dumpall`
 
@@ -403,6 +431,8 @@ Flags:
   comma-separated list (skips the initial discovery sweep).
 - `--sqlite` — after the dump finishes, automatically build the SQLite
   database (see `sqlite` subcommand below).
+- `--enrich`, `--enrich-concurrency <N>` — enrich every type's dump via
+  Data API (forwarded to the underlying `dumpone`).
 - `--batch-size <N>`, `--max <N>`, `--auth` — forwarded to each
   underlying `dumpone`.
 
@@ -412,6 +442,11 @@ Rebuild a SQLite database from the JSONL dumps in `out/<host>/es/`. One
 table per Bubble data type. Column types are inferred from Bubble's
 field naming convention (`_number`, `_boolean`, `_date`, `___<type>`)
 and from the JSON shape seen in the records.
+
+Enriched dumps (`_enrich` block present) automatically feed the merged
+view into the table — every column is under its Bubble display name
+with ES values available under `<display>@db` aliases when the two
+pipelines disagreed.
 
 Reference-style Bubble fields (`<creator_id>__LOOKUP__<target_id>`) get
 a companion `<field>__ref_id` column containing the extracted target
@@ -427,6 +462,9 @@ Flags:
 
 - `--type <name>` — rebuild only a single type's table (must already
   have a JSONL dump on disk).
+- `--enrich` — enrich any JSONL that doesn't already carry an `_enrich`
+  block before building. Fetches `/api/1.1/meta` once per type to learn
+  the id↔display mapping if `datatypes --probe` hasn't run.
 - Default output path: `out/<host>/es.sqlite`. Pass a positional path
   to override.
 

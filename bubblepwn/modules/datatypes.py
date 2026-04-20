@@ -426,12 +426,29 @@ class DataTypes(Module):
             console.print(f"  [dim]meta not reachable (status={status})[/]")
             return
         parsed = parse_meta(body)
+        fields_added = 0
         for tname in parsed.get_types:
             raw = tname if tname == "user" else f"custom.{tname}"
-            ctx.schema.upsert_type(raw, source="meta")
+            t = ctx.schema.upsert_type(raw, source="meta")
+            # Bubble publishes the canonical id↔display mapping here. Store
+            # it on the type so downstream modules (es-audit enrich,
+            # sqlite) can merge ES + Data API records by matching names.
+            for mf in parsed.fields_for(tname):
+                fname = mf.display or mf.id
+                if not fname or fname in t.fields:
+                    continue
+                t.add_field(BubbleField(
+                    name=fname,
+                    type=mf.type or "unknown",
+                    raw=mf.id,
+                    source="meta",
+                    display=mf.display or None,
+                ))
+                fields_added += 1
         no_auth = parsed.no_auth_workflows()
         console.print(
             f"  [green]✓[/] meta → {len(parsed.get_types)} types, "
+            f"+{fields_added} field(s), "
             f"{len(parsed.post_endpoints)} endpoints, "
             f"{len(no_auth)} no-auth workflows"
         )

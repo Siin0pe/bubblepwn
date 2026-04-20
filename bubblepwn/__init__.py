@@ -1,6 +1,6 @@
 import sys
 
-__version__ = "0.2.21"
+__version__ = "0.2.22"
 
 # Windows console defaults to cp1252, which can't encode the box-drawing and
 # arrow characters Rich emits — without this, piping output (> file.txt) or
