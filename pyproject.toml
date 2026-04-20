@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bubblepwn"
-version = "0.2.22"
+version = "0.2.23"
 description = "Interactive pentest toolkit for Bubble.io applications"
 readme = "README.md"
 requires-python = ">=3.11"

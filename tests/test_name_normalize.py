@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from bubblepwn.bubble.name_normalize import (
-    FieldKey,
     key_for_db,
     key_for_display,
     match,

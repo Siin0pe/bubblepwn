@@ -33,7 +33,7 @@ from bubblepwn.bubble.api import BubbleAPI
 from bubblepwn.bubble.es import payload as pl
 from bubblepwn.bubble.es.transport import EsTransport
 from bubblepwn.bubble import name_normalize as nn
-from bubblepwn.bubble.parse.meta import MetaField, parse_meta
+from bubblepwn.bubble.parse.meta import parse_meta
 from bubblepwn.context import Context, Finding
 from bubblepwn.modules.base import Module, parse_flags, register
 from bubblepwn.ui import console, panel, progress_iter

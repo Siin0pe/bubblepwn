@@ -1,7 +1,7 @@
 """Unit tests for the plugin catalogue + marketplace enrichment."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import httpx
 import pytest

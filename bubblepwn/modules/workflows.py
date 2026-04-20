@@ -37,17 +37,72 @@ from bubblepwn.context import Context, Finding
 from bubblepwn.modules.base import Module, parse_flags, register
 from bubblepwn.ui import console, panel, progress_iter
 
-_MISSING_RE = re.compile(r"missing (?:parameter|data).*?['\"]([a-zA-Z_][a-zA-Z0-9_]*)", re.I)
-_INVALID_RE = re.compile(r"(?:invalid|bad).*?['\"]([a-zA-Z_][a-zA-Z0-9_]*)", re.I)
+# Bubble surfaces the missing/invalid param name in several shapes:
+#
+#   "Missing parameter for workflow X: parameter code"          (unquoted)
+#   "Missing parameter 'code'"                                  (single quotes)
+#   "Missing data: parameter \"code\""                          (double quotes)
+#   "Invalid value for parameter code"                           (unquoted)
+#   "Invalid value for parameter 'code' (must be number)"       (single quotes)
+#
+# The old regexes required quotes and lost the hint on Bubble's most common
+# format (unquoted `parameter <name>`). The broader patterns below take the
+# first identifier-shaped token after ``parameter``.
+_MISSING_RE = re.compile(
+    # Anchor on "missing parameter" or "missing data" / "missing required
+    # parameter" (Bubble uses all three across versions).
+    r"missing\s+(?:required\s+)?(?:parameter|data)"
+    # Optional "for workflow <name>" clause that precedes the colon.
+    r"(?:\s+for\s+workflow\s+\S+)?"
+    # Any whitespace / colon / comma / dash between the anchor and the
+    # param name itself.
+    r"[:,\s\-–—]+"
+    # Optional second "parameter" keyword (the long-form shape).
+    r"(?:parameter\s+)?"
+    # The identifier, optionally wrapped in single or double quotes.
+    r"['\"`]?([a-zA-Z_][a-zA-Z0-9_]*)['\"`]?",
+    re.I,
+)
+_INVALID_RE = re.compile(
+    r"(?:invalid|bad|wrong)(?:\s+value)?(?:\s+for)?\s+parameter\s+"
+    r"['\"`]?([a-zA-Z_][a-zA-Z0-9_]*)['\"`]?",
+    re.I,
+)
 _PASSWORD_LEAK_RE = re.compile(
     r'"(?:password|temp_pass|temporary_password|new_password|reset_token|token)"\s*:\s*"([^"]{6,})"',
     re.I,
 )
 _HEX64_IN_RESP_RE = re.compile(r"\b[a-f0-9]{48,96}\b")
 
+# Common first-parameter guesses for workflows where Bubble refused the
+# empty body but didn't name the missing param in an extractable way.
+# One successful probe unblocks the server — it then names the *next*
+# required param. Picking fields that are ubiquitous in Bubble apps
+# (auth flows, CRUD on `user`) maximises the hit rate with minimal
+# request volume.
+_COMMON_SEEDS = (
+    "email", "user_id", "id", "code", "token", "password",
+    "name", "user", "data", "value", "query", "text",
+    "phone", "username", "key", "type",
+)
+
 
 def _classify(status: int, body: Any) -> tuple[str, Optional[str]]:
-    """Return (label, hint). ``hint`` is a missing/invalid param name if found."""
+    """Return ``(label, hint)``. ``hint`` is a missing/invalid param name
+    when extractable, else a short human-readable excerpt of the body so
+    the caller can surface it in the UI without re-parsing the response.
+
+    Labels (ordered most to least interesting for a defender):
+      - ``OPEN_OK``  200/2xx                     — workflow ran anon, bad
+      - ``NOT_RUN``  400 NOT_RUN                 — workflow exists, condition
+                                                    not met (still reachable)
+      - ``MISSING``  400 missing parameter       — workflow exists, needs args
+      - ``INVALID``  400 invalid parameter       — workflow exists, needs
+                                                    typed args
+      - ``AUTH``     401/403                     — workflow exists, auth-gated
+      - ``BLOCKED``  404                         — no such workflow
+      - ``ERROR``    5xx / transport             — unclassifiable
+    """
     if status == 404:
         return "BLOCKED", None
     if status in (401, 403):
@@ -55,23 +110,54 @@ def _classify(status: int, body: Any) -> tuple[str, Optional[str]]:
     if 200 <= status < 300:
         return "OPEN_OK", None
     if 400 <= status < 500:
-        text = json.dumps(body) if not isinstance(body, str) else body
-        lower = text.lower()
-        m = _MISSING_RE.search(text)
+        # Run regex on the *raw* message string (not the JSON-dumped
+        # payload) so embedded quotes aren't mangled by escape sequences.
+        message = _extract_bubble_message(body) or ""
+        lower_all = (message + " " + (
+            json.dumps(body) if not isinstance(body, str) else body
+        )).lower()
+
+        # Bubble-specific: condition-gated workflows reach the endpoint
+        # but refuse to execute. The workflow is effectively reachable
+        # anon — fuzzing may bypass the condition.
+        if "not_run" in lower_all or "workflow won't run" in lower_all:
+            return "NOT_RUN", message or None
+
+        m = _MISSING_RE.search(message) if message else None
         if m:
             return "MISSING", m.group(1)
-        if "missing_data" in lower or "missing parameter" in lower:
-            return "MISSING", None
-        m = _INVALID_RE.search(text)
+        if "missing_data" in lower_all or "missing parameter" in lower_all:
+            return "MISSING", message or None
+        m = _INVALID_RE.search(message) if message else None
         if m:
             return "INVALID", m.group(1)
-        return "INVALID", None
+        return "INVALID", message or None
     return "ERROR", None
+
+
+def _extract_bubble_message(body: Any) -> Optional[str]:
+    """Pull the ``message`` field from a Bubble error response.
+
+    Bubble returns either ``{"message": "..."}`` or
+    ``{"body": {"message": "..."}}`` depending on the failure class. Either
+    way the human-readable hint is the first place to display when param
+    extraction fails.
+    """
+    if isinstance(body, dict):
+        if isinstance(body.get("message"), str):
+            return body["message"][:160]
+        inner = body.get("body")
+        if isinstance(inner, dict) and isinstance(inner.get("message"), str):
+            return inner["message"][:160]
+    if isinstance(body, str):
+        return body[:160]
+    return None
 
 
 def _sev(label: str) -> str:
     return {
         "OPEN_OK": "critical",
+        "NOT_RUN": "low",
         "MISSING": "medium",
         "INVALID": "medium",
         "AUTH":    "info",
@@ -104,8 +190,8 @@ class Workflows(Module):
     flags = (
         ("--wordlist <file>", "custom workflow name list — one per line "
                               "(default: built-in Bubble list)"),
-        ("--max <N>", "cap the number of workflow names probed "
-                      "(default: 200)"),
+        ("--max <N>", "cap the number of workflow names probed. "
+                      "Omit to probe every candidate (default behaviour)."),
         ("--deep-params", "analyze: also fetch dynamic.js to widen the "
                           "param-extraction regex"),
         ("--include-test", "also probe /version-test/ branch"),
@@ -168,15 +254,24 @@ class Workflows(Module):
     ) -> None:
         include_test = bool(flags.get("include_test"))
         deep_params = bool(flags.get("deep_params"))
-        max_candidates = int(flags.get("max", 200))
+        # --max is opt-in only: passing it caps the candidate list,
+        # omitting it probes every single candidate discovered. The
+        # previous default of 200 silently dropped workflows — we'd
+        # rather the scan take longer than miss them.
+        raw_max = flags.get("max")
+        max_candidates: Optional[int] = (
+            int(raw_max) if isinstance(raw_max, (int, str)) and str(raw_max).strip()
+            else None
+        )
         user_wordlist = flags.get("wordlist")
 
         candidates = await self._collect_candidates(
             ctx, extra_wordlist=str(user_wordlist) if user_wordlist else None
         )
-        if len(candidates) > max_candidates:
+        if max_candidates is not None and len(candidates) > max_candidates:
             console.print(
-                f"[yellow]Trimming {len(candidates)} → {max_candidates} (use `--max N` to override)[/]"
+                f"[dim]--max {max_candidates} · probing {max_candidates}/"
+                f"{len(candidates)} candidates (drop the flag to probe all)[/]"
             )
             candidates = candidates[:max_candidates]
 
@@ -204,11 +299,10 @@ class Workflows(Module):
                     }
                     if (
                         deep_params
-                        and res["label"] in ("MISSING", "INVALID")
-                        and res.get("hint")
+                        and res["label"] in ("MISSING", "INVALID", "NOT_RUN")
                     ):
                         row["params"] = await self._extract_params(
-                            api, name, res["hint"],
+                            api, name, res.get("hint"),
                             update_cb=lambda m, n=name, b=branch: bar.set_description(
                                 f"{b} · {n[:40]} · {m}"
                             ),
@@ -278,7 +372,7 @@ class Workflows(Module):
         self,
         api: BubbleAPI,
         name: str,
-        seed_param: str,
+        seed_param: Optional[str],
         max_iter: int = 20,
         *,
         update_cb: Optional[Any] = None,
@@ -289,6 +383,13 @@ class Workflows(Module):
         fill it with a typed placeholder and re-post until we stop getting
         MISSING/INVALID labels.
 
+        When ``seed_param`` is ``None`` (regex failed to extract a hint),
+        fall back to a short list of common Bubble param names
+        (``email``, ``user_id``, ``id``, ``code``, ``token``…) — posting
+        with one of them set often unblocks the server and it names the
+        *next* missing param in the response. The extraction then
+        proceeds as usual.
+
         ``update_cb`` receives a short string after each probe (``learning
         params · N`` etc.) so the caller — typically an outer progress bar
         or a console.status — can surface activity. Up to ``max_iter`` (20)
@@ -296,25 +397,42 @@ class Workflows(Module):
         """
         body: dict[str, Any] = {}
         params: list[dict[str, str]] = []
-        current = seed_param
-        for i in range(max_iter):
-            if current is None:
-                break
+        seeds: list[str]
+        if seed_param:
+            seeds = [seed_param]
+        else:
+            seeds = list(_COMMON_SEEDS)
+
+        iter_i = 0
+        while iter_i < max_iter and seeds:
+            current = seeds.pop(0)
             if current in body:
-                break
+                continue
             body[current] = "bubblepwn-probe"
+            iter_i += 1
             if update_cb is not None:
                 try:
-                    update_cb(f"learning params · {i + 1}")
+                    update_cb(f"learning params · {iter_i} ({current})")
                 except Exception:
                     pass
-            res = await api.workflow(name, method="POST", body=body)
-            status, resp = res
+            status, resp = await api.workflow(name, method="POST", body=body)
             label, hint = _classify(status, resp)
-            params.append({"name": current, "after_status": str(status), "after_label": label})
-            if label not in ("MISSING", "INVALID"):
+            params.append({
+                "name": current,
+                "after_status": str(status),
+                "after_label": label,
+            })
+            if label not in ("MISSING", "INVALID", "NOT_RUN"):
+                # Either OPEN_OK (great — we found the minimum args) or
+                # AUTH/BLOCKED/ERROR (no point going further).
                 break
-            current = hint
+            # Server named the next missing param → prioritise it.
+            if hint and hint not in body:
+                seeds.insert(0, hint)
+            elif not seeds and not seed_param:
+                # Seed list exhausted without a hit — stop rather than
+                # spam the server with random probes.
+                break
         return params
 
     def _render_analyze(self, rows: list[dict[str, Any]]) -> None:
@@ -338,20 +456,36 @@ class Workflows(Module):
 
         style_for = {
             "OPEN_OK": "red bold",
+            "NOT_RUN": "cyan",
             "MISSING": "yellow",
             "INVALID": "yellow",
             "AUTH": "blue",
         }
-        for r in sorted(interesting, key=lambda x: (x["branch"], x["name"])):
+        # Sort order: most actionable label first, then by branch/name.
+        label_rank = {
+            "OPEN_OK": 0, "MISSING": 1, "INVALID": 2,
+            "NOT_RUN": 3, "AUTH": 4,
+        }
+        interesting.sort(
+            key=lambda r: (
+                label_rank.get(r["label"], 9), r["branch"], r["name"],
+            )
+        )
+        for r in interesting:
             cls = r["label"]
-            params_txt = ",".join(p["name"] for p in r.get("params", []))
+            params = r.get("params") or []
+            params_txt = ",".join(p["name"] for p in params)
             hint = r.get("hint") or ""
+            # When extraction happened, show what we learned; otherwise
+            # surface the raw Bubble message so the user can see why the
+            # server refused the request and iterate on it manually.
+            hint_column = params_txt or hint or ""
             table.add_row(
                 r["branch"],
                 r["name"],
                 str(r["status"]),
                 f"[{style_for.get(cls, 'white')}]{cls}[/]",
-                params_txt or hint,
+                hint_column,
             )
         console.print(table)
 
@@ -374,6 +508,7 @@ class Workflows(Module):
     ) -> None:
         open_ok = [r for r in rows if r["label"] == "OPEN_OK"]
         missing = [r for r in rows if r["label"] == "MISSING"]
+        not_run = [r for r in rows if r["label"] == "NOT_RUN"]
         auth = [r for r in rows if r["label"] == "AUTH"]
 
         if open_ok:
@@ -398,6 +533,27 @@ class Workflows(Module):
                     "workflows": [
                         {"name": r["name"], "branch": r["branch"], "first_param": r.get("hint")}
                         for r in missing
+                    ]
+                },
+            ))
+        if not_run:
+            ctx.add_finding(Finding(
+                module=self.name,
+                severity="low",
+                title=(
+                    f"{len(not_run)} workflow(s) reachable anon but gated by a "
+                    "condition (NOT_RUN) — conditions bypassable via fuzz"
+                ),
+                detail=(
+                    "Bubble confirmed the workflow exists and accepts POSTs "
+                    "without auth, but a precondition (triggering criterion) "
+                    "refused to run. Run `workflows fuzz <name>` with varied "
+                    "payloads to attempt bypass."
+                ),
+                data={
+                    "workflows": [
+                        {"name": r["name"], "branch": r["branch"], "message": r.get("hint")}
+                        for r in not_run
                     ]
                 },
             ))

@@ -516,13 +516,26 @@ that match auth / password / reset / admin keywords. Classification:
 |---|---|---|
 | `BLOCKED` | 404 | absent or private |
 | `AUTH`    | 401 / 403 | exists, auth required |
-| `MISSING` | 400 + `MISSING_DATA` | exists, first missing param leaked |
-| `INVALID` | 400 (other) | exists, invalid payload |
+| `NOT_RUN` | 400 + `NOT_RUN` | exists, reachable anon, but a Bubble condition refused to execute (potentially bypassable via `fuzz`) |
+| `MISSING` | 400 + `MISSING_DATA` | exists, first missing param extracted from the response |
+| `INVALID` | 400 (other) | exists, invalid payload — Bubble message surfaced in the hint column |
 | `OPEN_OK` | 2xx | executed anonymously (**critical**) |
 | `ERROR`   | network | unreachable |
 
+Without `--max`, every discovered candidate is probed (no silent trim).
+`--max N` is opt-in and caps the candidate list.
+
 With `--deep-params`, iterates on 400 responses to reconstruct the full
-parameter list of each workflow by filling placeholders one at a time.
+parameter list of each workflow. Two modes:
+
+- **Seeded** — the 400 body named a param (e.g. `Missing parameter
+  'user_id'`). Extraction starts with that name.
+- **Unseeded fallback** — the body said MISSING/INVALID but no param
+  name was extractable. A short list of common Bubble param names
+  (`email`, `user_id`, `id`, `code`, `token`, `password`…) is tried
+  as the first placeholder; whichever one unblocks the server lets
+  Bubble name the *next* required param, and extraction proceeds from
+  there. Up to 20 HTTP round-trips per workflow.
 
 Automatic temp-password leak scan: regex on every response body for
 `"password"`, `"temp_pass"`, `"reset_token"` fields. A match is rendered
